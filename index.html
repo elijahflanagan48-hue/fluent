@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f4f1e8" />
+  <title>fluent. — кабинет преподавателя</title>
+  <meta name="description" content="Умный кабинет преподавателя английского: расписание, оплаты, домашние задания и прогресс учеников." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#" data-route="overview" aria-label="fluent. — на главную">
+        <span>fluent<span class="brand-dot">.</span></span>
+        <small>teaching studio</small>
+      </a>
+
+      <div class="profile-card">
+        <div class="avatar">AM</div>
+        <div>
+          <strong id="profileName">Анна Морозова</strong>
+          <span id="profileRole">Преподаватель</span>
+        </div>
+        <button class="icon-button profile-menu" aria-label="Меню профиля">•••</button>
+      </div>
+
+      <nav class="main-nav" aria-label="Основная навигация">
+        <button class="nav-item active" data-route="overview"><span class="nav-icon">⌂</span>Обзор</button>
+        <button class="nav-item" data-route="calendar"><span class="nav-icon">□</span>Календарь<span class="nav-badge">4</span></button>
+        <button class="nav-item teacher-only" data-route="students"><span class="nav-icon">◌</span>Ученики</button>
+        <button class="nav-item teacher-only" data-route="payments"><span class="nav-icon">₽</span>Оплаты</button>
+        <button class="nav-item" data-route="homework"><span class="nav-icon">↗</span>Домашние задания<span class="nav-badge coral">3</span></button>
+        <button class="nav-item" data-route="materials"><span class="nav-icon">◇</span>Материалы</button>
+        <button class="nav-item teacher-only" data-route="analytics"><span class="nav-icon">⌁</span>Аналитика</button>
+        <button class="nav-item" data-route="messages"><span class="nav-icon">··</span>Сообщения<span class="status-dot"></span></button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="mode-switch" role="group" aria-label="Режим просмотра">
+          <button class="active" data-mode="teacher">Teacher</button>
+          <button data-mode="student">Student</button>
+        </div>
+        <p>Переключите роль, чтобы увидеть кабинет глазами ученика.</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="Открыть меню">☰</button>
+        <div class="today"><span class="pulse"></span><span id="todayLabel">Сегодня</span></div>
+        <div class="topbar-actions">
+          <button class="search-button" id="searchButton"><span>⌕</span><span>Быстрый поиск</span><kbd>⌘ K</kbd></button>
+          <button class="icon-button notification" aria-label="Уведомления">♧<span></span></button>
+          <button class="primary-button teacher-only" id="quickAdd">+ Добавить</button>
+        </div>
+      </header>
+
+      <section class="page active" id="page-overview">
+        <div class="hero-grid">
+          <div class="welcome-block">
+            <div class="eyebrow" id="welcomeEyebrow">Пятница · 17 октября</div>
+            <h1 id="welcomeTitle">Доброе утро,<br><em>Анна.</em></h1>
+            <p id="welcomeCopy">Спокойный день: четыре урока, один новый платёж и два задания ждут проверки.</p>
+          </div>
+          <div class="quote-card">
+            <div class="quote-mark">“</div>
+            <p>Small steps<br>make fluent<br>speakers.</p>
+            <span>studio note #24</span>
+          </div>
+        </div>
+
+        <div class="metric-grid teacher-only">
+          <article class="metric-card lime">
+            <span class="metric-label">Доход в октябре</span>
+            <strong>128 400 ₽</strong>
+            <div class="metric-foot"><span>↑ 12% к сентябрю</span><div class="sparkline"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          </article>
+          <article class="metric-card paper">
+            <span class="metric-label">Проведено уроков</span>
+            <strong>47 <small>/ 64</small></strong>
+            <div class="progress"><span style="width:73%"></span></div>
+            <div class="metric-foot"><span>73% плана на месяц</span></div>
+          </article>
+          <article class="metric-card ink">
+            <span class="metric-label">Активных учеников</span>
+            <strong>18</strong>
+            <div class="avatar-stack"><b>EK</b><b>MI</b><b>AS</b><b>+15</b></div>
+          </article>
+        </div>
+
+        <div class="student-balance student-only">
+          <div>
+            <span class="eyebrow">Мой баланс</span>
+            <strong><span id="lessonBalance">6</span> занятий</strong>
+            <p>Следующее списание после урока 18 октября</p>
+          </div>
+          <div class="balance-orbit"><span>6</span><small>осталось</small></div>
+          <button class="secondary-button" data-toast="Запрос на оплату отправлен преподавателю">Пополнить баланс</button>
+        </div>
+
+        <div class="content-grid">
+          <section class="panel schedule-panel">
+            <div class="panel-header">
+              <div><span class="eyebrow">Расписание</span><h2>Ближайшие уроки</h2></div>
+              <button class="text-button" data-route="calendar">Открыть календарь →</button>
+            </div>
+            <div class="timeline" id="timeline">
+              <article class="lesson current">
+                <time><strong>10:00</strong><span>10:50</span></time>
+                <div class="lesson-line"></div>
+                <div class="lesson-info"><div><span class="lesson-tag">Сейчас</span><h3 class="teacher-only">Екатерина Волкова</h3><h3 class="student-only">Анна Морозова</h3><p>Business English · Negotiations</p></div><button class="lesson-action" data-toast="Комната урока откроется за 5 минут до начала">Войти ↗</button></div>
+              </article>
+              <article class="lesson">
+                <time><strong>12:30</strong><span>13:20</span></time>
+                <div class="lesson-line"></div>
+                <div class="lesson-info"><div><h3 class="teacher-only">Михаил Иванов</h3><h3 class="student-only">Conversation club</h3><p>General English · Travel</p></div><button class="more-button">•••</button></div>
+              </article>
+              <article class="lesson teacher-only">
+                <time><strong>16:00</strong><span>16:50</span></time>
+                <div class="lesson-line"></div>
+                <div class="lesson-info"><div><h3>Алиса Смирнова</h3><p>IELTS · Writing task 2</p></div><button class="more-button">•••</button></div>
+              </article>
+              <article class="lesson teacher-only">
+                <time><strong>19:00</strong><span>19:50</span></time>
+                <div class="lesson-line"></div>
+                <div class="lesson-info"><div><h3>Даниил Петров</h3><p>General English · Food culture</p></div><button class="more-button">•••</button></div>
+              </article>
+            </div>
+          </section>
+
+          <aside class="right-stack">
+            <section class="panel homework-widget">
+              <div class="panel-header compact"><div><span class="eyebrow">Homework</span><h2 id="homeworkWidgetTitle">Ждут проверки</h2></div><span class="big-count" id="homeworkCount">03</span></div>
+              <div class="homework-list">
+                <button><span class="subject-icon coral-bg">W</span><span><strong>Opinion essay</strong><small class="teacher-only">Алиса · 20 мин назад</small><small class="student-only">Срок: сегодня, 19:00</small></span><i>→</i></button>
+                <button><span class="subject-icon blue-bg">V</span><span><strong>Urban vocabulary</strong><small class="teacher-only">Михаил · вчера</small><small class="student-only">Срок: 20 октября</small></span><i>→</i></button>
+              </div>
+            </section>
+            <section class="panel payment-widget teacher-only">
+              <div class="payment-head"><div><span class="eyebrow">Новая оплата</span><strong>+ 12 000 ₽</strong></div><span class="payment-check">✓</span></div>
+              <p>Екатерина Волкова · пакет из 8 занятий</p>
+              <button class="text-button" data-route="payments">Все операции →</button>
+            </section>
+            <section class="panel streak-widget student-only">
+              <div><span class="eyebrow">Серия</span><strong>🔥 7 дней</strong><p>Вы занимались английским каждый день на этой неделе.</p></div>
+              <div class="week-row"><i>Пн</i><i>Вт</i><i>Ср</i><i>Чт</i><i>Пт</i><i class="muted">Сб</i><i class="muted">Вс</i></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page" id="page-calendar">
+        <div class="page-heading"><div><span class="eyebrow">Time management</span><h1>Календарь</h1><p>Все занятия, переносы и свободные окна — на одном экране.</p></div><button class="primary-button teacher-only" data-modal="lesson">+ Новый урок</button></div>
+        <div class="calendar-toolbar"><button class="icon-button" id="prevWeek">←</button><h2 id="calendarMonth">13–19 октября 2026</h2><button class="icon-button" id="nextWeek">→</button><div class="spacer"></div><button class="chip active">Неделя</button><button class="chip">Месяц</button></div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </section>
+
+      <section class="page" id="page-students">
+        <div class="page-heading"><div><span class="eyebrow">People</span><h1>Ученики</h1><p>Баланс, прогресс и следующая точка внимания по каждому ученику.</p></div><button class="primary-button" data-modal="student">+ Добавить ученика</button></div>
+        <div class="filter-row"><button class="chip active">Все · 18</button><button class="chip">Заканчиваются занятия · 4</button><button class="chip">Нужен ответ · 2</button><label class="inline-search">⌕ <input placeholder="Найти ученика"></label></div>
+        <div class="student-grid" id="studentGrid"></div>
+      </section>
+
+      <section class="page" id="page-payments">
+        <div class="page-heading"><div><span class="eyebrow">Money, calmly</span><h1>Оплаты</h1><p>Прозрачный учёт пакетов, балансов и ожидаемых поступлений.</p></div><button class="primary-button" data-modal="payment">+ Внести оплату</button></div>
+        <div class="payment-summary"><article><span>Получено в октябре</span><strong>128 400 ₽</strong><small>+12% к сентябрю</small></article><article><span>Ожидается</span><strong>36 000 ₽</strong><small>5 учеников</small></article><article><span>Средний чек</span><strong>9 876 ₽</strong><small>13 оплат</small></article></div>
+        <div class="panel table-panel"><div class="panel-header"><h2>История операций</h2><button class="text-button">Экспорт CSV ↓</button></div><div class="data-table" id="paymentsTable"></div></div>
+      </section>
+
+      <section class="page" id="page-homework">
+        <div class="page-heading"><div><span class="eyebrow">Practice loop</span><h1>Домашние задания</h1><p class="teacher-only">Создавайте задания, получайте ответы и давайте обратную связь.</p><p class="student-only">Все задания, дедлайны и комментарии преподавателя.</p></div><button class="primary-button teacher-only" data-modal="homework">+ Новое задание</button></div>
+        <div class="kanban" id="homeworkBoard"></div>
+      </section>
+
+      <section class="page" id="page-materials">
+        <div class="page-heading"><div><span class="eyebrow">Library</span><h1>Материалы</h1><p>Персональная библиотека заметок, ссылок, видео и тренажёров.</p></div><button class="primary-button teacher-only" data-toast="Загрузка материалов будет доступна после подключения хранилища">+ Загрузить</button></div>
+        <div class="material-grid" id="materialGrid"></div>
+      </section>
+
+      <section class="page" id="page-analytics">
+        <div class="page-heading"><div><span class="eyebrow">Studio pulse</span><h1>Аналитика</h1><p>Доход, загрузка и учебный прогресс — без сложных таблиц.</p></div><button class="chip">Октябрь 2026⌄</button></div>
+        <div class="analytics-grid"><section class="panel chart-panel"><div class="panel-header"><div><span class="eyebrow">Доход</span><h2>Динамика за 6 месяцев</h2></div><strong>+34%</strong></div><div class="bar-chart"><div style="--h:42%"><span>Май</span></div><div style="--h:55%"><span>Июн</span></div><div style="--h:49%"><span>Июл</span></div><div style="--h:70%"><span>Авг</span></div><div style="--h:81%"><span>Сен</span></div><div class="accent" style="--h:94%"><span>Окт</span></div></div></section><section class="panel"><span class="eyebrow">Загрузка</span><h2>Лучшее время</h2><div class="heatmap" id="heatmap"></div></section></div>
+        <div class="metric-grid"><article class="metric-card paper"><span class="metric-label">Удержание учеников</span><strong>94%</strong><div class="progress"><span style="width:94%"></span></div></article><article class="metric-card coral"><span class="metric-label">Домашние задания</span><strong>81%</strong><div class="metric-foot">выполнены вовремя</div></article><article class="metric-card blue"><span class="metric-label">Средняя загрузка</span><strong>76%</strong><div class="metric-foot">24 свободных окна</div></article></div>
+      </section>
+
+      <section class="page" id="page-messages">
+        <div class="page-heading"><div><span class="eyebrow">Stay connected</span><h1>Сообщения</h1><p>Вопросы, комментарии и договорённости без потери контекста.</p></div></div>
+        <div class="messenger panel"><div class="conversation-list" id="conversationList"></div><div class="chat"><div class="chat-head"><div class="avatar small">ЕК</div><div><strong>Екатерина Волкова</strong><span>была онлайн 12 мин назад</span></div></div><div class="chat-body"><div class="bubble other">Анна, добрый день! Я отправила домашнее задание — можно короткий фидбек до урока?</div><div class="bubble mine">Добрый день! Да, конечно. Посмотрю сегодня до 18:00 и оставлю комментарии прямо в задании.</div><div class="bubble other">Спасибо! 🙌</div></div><form class="chat-input" id="chatForm"><input id="chatInput" placeholder="Напишите сообщение…"><button class="primary-button">Отправить ↑</button></form></div></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal-close" id="modalClose" aria-label="Закрыть">×</button>
+      <span class="eyebrow" id="modalEyebrow">Quick action</span>
+      <h2 id="modalTitle">Добавить</h2>
+      <form id="modalForm"></form>
+    </div>
+  </div>
+
+  <div class="command-palette" id="commandPalette" hidden>
+    <div class="command-box"><div class="command-input">⌕ <input id="commandInput" placeholder="Перейти к разделу или найти ученика…"></div><div class="command-results" id="commandResults"></div><small>↑↓ выбрать · Enter открыть · Esc закрыть</small></div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
