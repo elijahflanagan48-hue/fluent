@@ -1,0 +1,26 @@
+# This provisions a paid service and disk only after you approve it in Render.
+services:
+  - type: web
+    name: fluent-studio
+    runtime: python
+    plan: 0.5c-512mb
+    region: frankfurt
+    repo: https://github.com/elijahflanagan48-hue/fluent
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m backend.hosted
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    disk:
+      name: fluent-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: FLUENT_DATA_DIR
+        value: /var/data/fluent
+      - key: FLUENT_SETUP_TOKEN
+        generateValue: true
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"

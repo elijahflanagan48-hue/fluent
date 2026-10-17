@@ -379,5 +379,36 @@ class StudioTest(unittest.TestCase):
         with patch.dict(os.environ,{'FLUENT_BASE_URL':'https://studio.example','FLUENT_DEMO':'1'}):
             with self.assertRaises(SystemExit):main()
 
+    def test_browser_setup_requires_secret_and_is_single_use(self):
+        folder=str(Path(self.temp.name)/'empty-studio')
+        with patch.dict(os.environ,{'FLUENT_DATA_DIR':folder,'FLUENT_SETUP_TOKEN':'s'*48}):
+            initialize();client=Client()
+            info=self.assert_ok(client.get('/api/auth/info'))
+            self.assertTrue(info['setup_enabled']);self.assertFalse(info['ready'])
+            payload={'setup_token':'wrong','name':'Owner','email':'owner@example.test','password':PASSWORD}
+            self.assertEqual(client.post('/api/auth/setup',payload)[0],403)
+            payload['setup_token']='s'*48
+            result=self.assert_ok(client.post('/api/auth/setup',payload))
+            self.assertEqual(result['user']['role'],'teacher')
+            self.assertEqual(Client().post('/api/auth/setup',payload)[0],409)
+            self.assertFalse(self.assert_ok(client.get('/api/auth/info'))['setup_enabled'])
+
+    def test_browser_setup_is_disabled_without_secret(self):
+        with patch.dict(os.environ,{'FLUENT_DATA_DIR':str(Path(self.temp.name)/'empty-studio'),'FLUENT_SETUP_TOKEN':''}):
+            initialize()
+            self.assertEqual(Client().post('/api/auth/setup',{'email':'owner@example.test','password':PASSWORD})[0],404)
+
+    def test_hosted_config_uses_host_url_and_persistent_disk(self):
+        from backend.hosted import hosted_config
+        with patch.dict(os.environ,{'FLUENT_BASE_URL':'','RENDER_EXTERNAL_URL':'https://studio-test.onrender.com','PORT':'10000','FLUENT_DATA_DIR':self.temp.name,'GUNICORN_CMD_ARGS':'--access-logfile -'}):
+            self.assertEqual(hosted_config(),10000)
+            self.assertEqual(os.environ['FLUENT_BASE_URL'],'https://studio-test.onrender.com')
+            self.assertEqual(os.environ['GUNICORN_CMD_ARGS'],'')
+
+    def test_hosted_config_refuses_missing_storage(self):
+        from backend.hosted import hosted_config
+        with patch.dict(os.environ,{'FLUENT_BASE_URL':'https://studio.example','FLUENT_DATA_DIR':''}):
+            with self.assertRaises(SystemExit):hosted_config()
+
 
 if __name__=='__main__': unittest.main()

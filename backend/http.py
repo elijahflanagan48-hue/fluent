@@ -82,7 +82,27 @@ def public_route(db, env, path, method, data):
     if path=='/api/health' and method=='GET':
         return {'ok':True},200,[]
     if path=='/api/auth/info' and method=='GET':
-        return {'demo':os.environ.get('FLUENT_DEMO')=='1','ready':bool(one(db,"SELECT id FROM users WHERE role='teacher'"))},200,[]
+        ready=bool(one(db,"SELECT id FROM users WHERE role='teacher'"))
+        return {'demo':os.environ.get('FLUENT_DEMO')=='1','ready':ready,
+                'setup_enabled':not ready and len(os.environ.get('FLUENT_SETUP_TOKEN',''))>=32},200,[]
+    if path=='/api/auth/setup' and method=='POST':
+        rate_limit(db,'setup:'+env.get('REMOTE_ADDR','local'),8,3600)
+        db.commit()
+        db.execute('BEGIN IMMEDIATE')
+        expected=os.environ.get('FLUENT_SETUP_TOKEN','')
+        if len(expected)<32:
+            raise Problem('Открытие студии через браузер не настроено.',404)
+        provided=data.get('setup_token','')
+        if not isinstance(provided,str) or not hmac.compare_digest(provided.encode(),expected.encode()):
+            raise Problem('Код открытия студии не совпадает.',403)
+        if one(db,"SELECT id FROM users WHERE role='teacher'"):
+            raise Problem('Студия уже открыта. Войдите в свой кабинет.',409)
+        person=uid()
+        insert(db,'users',id=person,email=email(data.get('email')),name=text(data.get('name'),100,True),
+               role='teacher',password_hash=password_hash(data.get('password')),created_at=now())
+        audit(db,None,'studio.opened',person)
+        payload,headers=make_session(db,one(db,'SELECT * FROM users WHERE id=?',(person,),True))
+        return payload,200,headers
     if path=='/api/auth/demo' and method=='POST':
         if os.environ.get('FLUENT_DEMO')!='1':
             raise Problem('Демо отключено.',404)
