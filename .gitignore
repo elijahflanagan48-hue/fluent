@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.venv/
+data/
+data-demo/
+backups/
+*.sqlite3*
+*.zip
+.test-cache/
+node_modules/
+*.log
