@@ -13,3 +13,5 @@ backups/
 .test-cache/
 node_modules/
 *.log
+dist/
+.netlify/

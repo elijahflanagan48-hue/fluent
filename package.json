@@ -1,0 +1,16 @@
+{
+  "name": "fluent-portal",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "build": "node scripts/build-netlify.mjs",
+    "test": "node --test tests/serverless*.test.mjs"
+  },
+  "dependencies": {
+    "pg": "8.23.1",
+    "luxon": "3.7.2",
+    "fflate": "0.8.3",
+    "nodemailer": "10.1.2"
+  }
+}
