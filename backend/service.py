@@ -33,7 +33,9 @@ def bootstrap(db, user):
     for payment in payments:
         for key in ['request_key', 'provider_id', 'qr_svg', 'error']:
             payment.pop(key, None)
-    result = {'user': public_user(user), 'settings': cfg, 'students': people,
+    import os
+    result = {'hosting': {'free': os.environ.get('FLUENT_HOSTING')=='free'},
+              'user': public_user(user), 'settings': cfg, 'students': people,
               'teachers': rows(db, "SELECT id,name FROM users WHERE role='teacher'"),
               'lessons': lessons, 'slots': rows(db, 'SELECT * FROM slots WHERE starts_at>? ORDER BY starts_at', (now(),)),
               'payments': payments, 'packages': rows(db, 'SELECT * FROM packages '+('' if user['role']=='teacher' else 'WHERE active=1')+' ORDER BY lessons'),
@@ -186,7 +188,7 @@ def lesson_action(db, user, lesson_id, action, data):
         meeting = integrations.zoom_meeting(lesson)
         db.execute('UPDATE lessons SET zoom_id=?,meeting_url=? WHERE id=?', (str(meeting['id']), safe_url(meeting['join_url']), lesson_id))
         updated=one(db,'SELECT * FROM lessons WHERE id=?',(lesson_id,),True)
-        db.execute("INSERT OR REPLACE INTO sync_state VALUES ('zoom',?,?)",(lesson_id,integrations.zoom_fingerprint(updated)))
+        db.execute("INSERT INTO sync_state VALUES ('zoom',?,?) ON CONFLICT(provider,entity_id) DO UPDATE SET fingerprint=excluded.fingerprint",(lesson_id,integrations.zoom_fingerprint(updated)))
         return {'ok': True}
     if action == 'complete':
         teacher(user)
@@ -510,6 +512,9 @@ def upload(db,user,data):
         raise Problem('Размер файла должен быть от 1 байта до 10 МБ.')
     if db.execute('SELECT COALESCE(SUM(size),0) FROM files WHERE owner_id=?',(user['id'],)).fetchone()[0]+len(raw)>1024*1024*1024:
         raise Problem('Достигнут лимит вложений 1 ГБ. Обратитесь к преподавателю.',413)
+    from . import storage
+    if storage.cloud() and db.execute('SELECT COALESCE(SUM(size),0) FROM files').fetchone()[0]+len(raw)>800*1024*1024:
+        raise Problem('Достигнут общий лимит файлов бесплатной студии 800 МБ. Данные не удалены; новые загрузки приостановлены.',413)
     suffix=Path(filename).suffix.lower()
     mime=None
     if raw.startswith(b'\x89PNG\r\n\x1a\n') and suffix=='.png': mime='image/png'
@@ -531,12 +536,8 @@ def upload(db,user,data):
     if not mime or (entity_type=='sbp_qr' and not mime.startswith('image/')):
         raise Problem('Поддерживаются PDF, PNG, JPEG, WebP, TXT, Office и аудио. Для QR нужен PNG или JPEG.')
     file_id=uid()
-    folder=data_dir()/'uploads'
-    folder.mkdir(exist_ok=True,mode=0o700)
-    path=folder/file_id
-    path.write_bytes(raw)
-    path.chmod(0o600)
     insert(db,'files',id=file_id,owner_id=user['id'],student_id=student_id,entity_type=entity_type,entity_id=entity_id,filename=filename,mime=mime,size=len(raw),created_at=now())
+    storage.put(file_id,raw,mime)
     if entity_type=='sbp_qr':
         db.execute('UPDATE settings SET value=? WHERE key=?',(json.dumps(file_id),'sbp_qr_file_id'))
     return {'id':file_id,'filename':filename}

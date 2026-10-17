@@ -128,6 +128,9 @@ def digest(value):
 
 
 def connect():
+    if os.environ.get('DATABASE_URL'):
+        from .postgres import Database
+        return Database(os.environ['DATABASE_URL'])
     folder = data_dir()
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     db = sqlite3.connect(str(folder / 'fluent.sqlite3'), timeout=15)
@@ -162,9 +165,13 @@ DEFAULTS = {'studio_name': 'fluent.', 'teacher_name': 'Преподавател�
 
 def initialize():
     with connect() as db:
-        db.executescript((ROOT / 'backend/schema.sql').read_text())
+        if getattr(db, 'dialect', '') == 'postgres':
+            if not one(db, 'SELECT version FROM schema_version WHERE version=1'):
+                raise RuntimeError('Сначала подготовьте облачную схему базы.')
+        else:
+            db.executescript((ROOT / 'backend/schema.sql').read_text())
         for key, value in DEFAULTS.items():
-            db.execute('INSERT OR IGNORE INTO settings VALUES (?,?)', (key, json.dumps(value, ensure_ascii=False)))
+            db.execute('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO NOTHING', (key, json.dumps(value, ensure_ascii=False)))
 
 
 def settings(db):

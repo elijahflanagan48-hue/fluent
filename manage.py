@@ -22,7 +22,8 @@ def create_owner(address,name):
     print('Кабинет преподавателя создан.')
 
 
-def backup(destination=None):
+def backup(destination=None, source_db=None, include_files=True):
+    from backend import storage
     folder=data_dir()
     target=Path(destination) if destination else folder/'backups'/('fluent-'+now().replace(':','-')+'.zip')
     target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -30,10 +31,24 @@ def backup(destination=None):
         raise ValueError('Архив уже существует.')
     with tempfile.TemporaryDirectory(prefix='fluent-backup-') as scratch:
         snapshot=Path(scratch)/'fluent.sqlite3'
-        source=connect()
+        remote=bool(os.environ.get('DATABASE_URL'))
+        source=source_db if remote and source_db else connect()
         copy=sqlite3.connect(str(snapshot))
         try:
-            source.backup(copy)
+            if remote:
+                # Portable, application-consistent export. The existing API write
+                # lock is reused rather than opening a second locked transaction.
+                if source_db is None: source.execute('BEGIN IMMEDIATE')
+                copy.executescript((Path(__file__).parent/'backend/schema.sql').read_text())
+                tables=copy.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                for (table,) in tables:
+                    if table in ('schema_version','sessions','tokens','integrations','calendar_events','sync_state'): continue
+                    columns=[row[1] for row in copy.execute('PRAGMA table_info('+table+')')]
+                    for record in source.execute('SELECT '+','.join(columns)+' FROM '+table).fetchall():
+                        copy.execute('INSERT INTO '+table+' ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+')',tuple(record[c] for c in columns))
+            else:
+                source.backup(copy)
+            attachments=copy.execute('SELECT id FROM files').fetchall()
             # Sessions and provider tokens must be reissued after a restore.
             copy.execute('DELETE FROM sessions')
             copy.execute('DELETE FROM tokens')
@@ -43,15 +58,19 @@ def backup(destination=None):
             copy.commit()
             copy.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         finally:
-            source.close()
+            if source is not source_db: source.close()
             copy.close()
         with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as archive:
             archive.write(snapshot,'fluent.sqlite3')
-            uploads=folder/'uploads'
-            if uploads.exists():
-                for file in uploads.iterdir():
-                    if file.is_file(): archive.write(file,'uploads/'+file.name)
+            if include_files:
+                for (file_id,) in attachments:
+                    archive.writestr('uploads/'+file_id,storage.get(file_id))
+                    if storage.cloud() and target.stat().st_size>128*1024*1024:
+                        raise ValueError('Полная копия превышает 128 МБ. Скачайте копию базы и вложения отдельно.')
     target.chmod(0o600)
+    if storage.cloud() and destination is None:
+        storage.put('backups/'+target.name,target.read_bytes(),'application/zip')
+        storage.retain_backups()
     return target
 
 
@@ -111,12 +130,17 @@ def main():
     parser=argparse.ArgumentParser()
     sub=parser.add_subparsers(dest='command',required=True)
     sub.add_parser('init')
+    sub.add_parser('cloud-schema')
     own=sub.add_parser('owner');own.add_argument('--email',required=True);own.add_argument('--name',required=True)
     reset=sub.add_parser('reset-owner');reset.add_argument('--email',required=True)
     backup_parser=sub.add_parser('backup');backup_parser.add_argument('--output')
     restore_parser=sub.add_parser('restore');restore_parser.add_argument('archive');restore_parser.add_argument('--destination',required=True)
     sub.add_parser('telegram-webhook')
     args=parser.parse_args()
+    if args.command=='cloud-schema':
+        from backend.postgres import schema_sql
+        print(schema_sql())
+        return
     initialize()
     if args.command=='owner': create_owner(args.email,args.name)
     elif args.command=='reset-owner':

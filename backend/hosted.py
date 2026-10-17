@@ -19,8 +19,15 @@ def hosted_config():
         if not 1024<=port<=65535: raise ValueError()
     except ValueError:
         raise SystemExit('Некорректный порт сервера.')
-    if not os.environ.get('FLUENT_DATA_DIR'):
+    if os.environ.get('FLUENT_HOSTING')=='free':
+        from . import storage
+        if not os.environ.get('DATABASE_URL') or not storage.cloud():
+            raise SystemExit('Бесплатный запуск требует облачной базы и защищённого хранилища.')
+        storage.config()
+        os.environ.setdefault('FLUENT_DATA_DIR','/tmp/fluent-runtime')
+    elif not os.environ.get('FLUENT_DATA_DIR'):
         raise SystemExit('Укажите папку постоянного диска в FLUENT_DATA_DIR.')
+    os.makedirs(os.environ['FLUENT_DATA_DIR'],mode=0o700,exist_ok=True)
     os.environ['FLUENT_BASE_URL']=origin
     # Render's runtime default enables access logs, which could log OAuth codes.
     os.environ['GUNICORN_CMD_ARGS']=''

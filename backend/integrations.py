@@ -124,8 +124,8 @@ def google_sync(db, user, lessons):
             except Problem:
                 # Recover a previous successful insert whose response was lost.
                 request_json(endpoint+'/'+event_id, body, headers, method='PUT')
-            db.execute('INSERT OR IGNORE INTO calendar_events VALUES (?,?,?)', (user['id'], lesson['id'], event_id))
-        db.execute('INSERT OR REPLACE INTO sync_state VALUES (?,?,?)',(provider,lesson['id'],fingerprint))
+            db.execute('INSERT INTO calendar_events VALUES (?,?,?) ON CONFLICT(user_id,lesson_id) DO NOTHING', (user['id'], lesson['id'], event_id))
+        db.execute('INSERT INTO sync_state VALUES (?,?,?) ON CONFLICT(provider,entity_id) DO UPDATE SET fingerprint=excluded.fingerprint',(provider,lesson['id'],fingerprint))
 
 
 def send_telegram(chat_id, message):

@@ -5,6 +5,32 @@ on:
 permissions:
   contents: read
 jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: fluent_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Verify application with least-privilege Postgres runtime
+        env:
+          FLUENT_TEST_POSTGRES_DSN: postgresql://postgres:disposable-ci-only@127.0.0.1:5432/fluent_test
+        run: python -B -m unittest discover -s tests -v
   tests:
     runs-on: ubuntu-latest
     steps:

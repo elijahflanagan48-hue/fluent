@@ -55,7 +55,7 @@ class StudioTest(unittest.TestCase):
 
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='fluent-test-')
-        self.environment=patch.dict(os.environ,{'FLUENT_DATA_DIR':self.temp.name,'FLUENT_BASE_URL':'http://127.0.0.1:4174','FLUENT_DEMO':'0','SMTP_HOST':'','SMTP_FROM':'','TELEGRAM_BOT_TOKEN':'','TELEGRAM_WEBHOOK_SECRET':'','GOOGLE_CLIENT_ID':'','GOOGLE_CLIENT_SECRET':''})
+        self.environment=patch.dict(os.environ,{'DATABASE_URL':getattr(self,'database_url',''),'FLUENT_STORAGE':'local','FLUENT_HOSTING':'','FLUENT_DATA_DIR':self.temp.name,'FLUENT_BASE_URL':'http://127.0.0.1:4174','FLUENT_DEMO':'0','SMTP_HOST':'','SMTP_FROM':'','TELEGRAM_BOT_TOKEN':'','TELEGRAM_WEBHOOK_SECRET':'','GOOGLE_CLIENT_ID':'','GOOGLE_CLIENT_SECRET':''})
         self.environment.start();initialize()
         self.teacher_id,self.student_id,self.other_id=uid(),uid(),uid()
         with connect() as db:

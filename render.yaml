@@ -1,9 +1,10 @@
-# This provisions a paid service and disk only after you approve it in Render.
+# Free compute only. Persistent data lives in a separate Supabase Free project.
+# Do not add a paid disk or a Render Free Postgres (it expires after 30 days).
 services:
   - type: web
     name: fluent-studio
     runtime: python
-    plan: 0.5c-512mb
+    plan: free
     region: frankfurt
     repo: https://github.com/elijahflanagan48-hue/fluent
     branch: main
@@ -11,13 +12,19 @@ services:
     startCommand: python -m backend.hosted
     healthCheckPath: /api/health
     autoDeployTrigger: checksPass
-    disk:
-      name: fluent-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
-      - key: FLUENT_DATA_DIR
-        value: /var/data/fluent
+      - key: FLUENT_HOSTING
+        value: free
+      - key: FLUENT_STORAGE
+        value: supabase
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: fluent-private
       - key: FLUENT_SETUP_TOKEN
         generateValue: true
       - key: PYTHONDONTWRITEBYTECODE

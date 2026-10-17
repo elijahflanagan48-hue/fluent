@@ -88,7 +88,7 @@ def sync_zoom():
             with connect() as db:
                 if lesson['status'] in ('cancelled','late_cancelled'):
                     db.execute('UPDATE lessons SET zoom_id=NULL,meeting_url=? WHERE id=?',('',lesson['id']))
-                db.execute("INSERT OR REPLACE INTO sync_state VALUES ('zoom',?,?)",(lesson['id'],fingerprint))
+                db.execute("INSERT INTO sync_state VALUES ('zoom',?,?) ON CONFLICT(provider,entity_id) DO UPDATE SET fingerprint=excluded.fingerprint",(lesson['id'],fingerprint))
         except Exception:
             from .core import notify_teacher
             with connect() as db:

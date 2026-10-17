@@ -16,13 +16,13 @@ from urllib.parse import parse_qs, quote
 from .core import (ROOT, Problem, connect, rows, one, insert, uid, now, digest, password_hash,
                    verify_password, make_token, token_record, public_user, teacher, owns,
                    base_url, data_dir, text, email, audit)
-from . import service, integrations
+from . import service, integrations, storage
 
 
 def rate_limit(db, key, limit=12, window=900):
     record = one(db,'SELECT * FROM rate_limits WHERE key=?',(key,))
     if not record or record['expires_at'] < time.time():
-        db.execute('INSERT OR REPLACE INTO rate_limits VALUES (?,?,?)',(key,1,time.time()+window))
+        db.execute('INSERT INTO rate_limits VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET count=excluded.count,expires_at=excluded.expires_at',(key,1,time.time()+window))
     elif record['count'] >= limit:
         raise Problem('Слишком много попыток. Повторите позже.',429)
     else:
@@ -189,7 +189,7 @@ def api_route(db,env,path,method,data,user):
         if not token.get('refresh_token'):
             raise Problem('Google не выдал доступ для синхронизации. Повторите подключение.')
         token['expires_at']=time.time()+token['expires_in']
-        db.execute("INSERT OR REPLACE INTO integrations VALUES (?,'google',?)",(user['id'],json.dumps(token)))
+        db.execute("INSERT INTO integrations VALUES (?,'google',?) ON CONFLICT(user_id,provider) DO UPDATE SET data=excluded.data",(user['id'],json.dumps(token)))
         db.execute('DELETE FROM calendar_events WHERE user_id=?',(user['id'],))
         db.execute('DELETE FROM sync_state WHERE provider=?',('google:'+user['id'],))
         db.execute('DELETE FROM tokens WHERE token_hash=?',(record['token_hash'],))
@@ -220,18 +220,15 @@ def api_route(db,env,path,method,data,user):
         file=one(db,'SELECT * FROM files WHERE id=?',(path.split('/')[-1],),True)
         if not service.can_read_file(db,user,file):
             raise Problem('Нет доступа к вложению.',403)
-        filepath=data_dir()/'uploads'/file['id']
-        if not filepath.is_file():
-            raise Problem('Файл недоступен.',404)
         inline=file['mime'].startswith(('audio/','image/'))
-        return filepath.read_bytes(),200,[('Content-Type',file['mime']),('Content-Disposition',('inline' if inline else 'attachment')+"; filename*=UTF-8''"+quote(file['filename'])),('Cache-Control','private, no-store')]
+        return storage.get(file['id']),200,[('Content-Type',file['mime']),('Content-Disposition',('inline' if inline else 'attachment')+"; filename*=UTF-8''"+quote(file['filename'])),('Cache-Control','private, no-store')]
     if path.startswith('/api/export/') and method=='GET':
         kind=path.split('/')[-1]
         return service.csv_export(db,user,kind),200,[('Content-Type','text/csv; charset=utf-8'),('Content-Disposition','attachment; filename="fluent-'+kind+'.csv"')]
     if path=='/api/backups' and method=='POST':
         teacher(user)
         from manage import backup
-        archive=backup()
+        archive=backup(source_db=db)
         audit(db,user,'backup.created',archive.name)
         return {'url':'/api/backups/'+archive.name},200,[]
     if path.startswith('/api/backups/') and method=='GET':
@@ -240,9 +237,9 @@ def api_route(db,env,path,method,data,user):
         if not re.fullmatch(r'fluent-[0-9T\-Z]+\.zip',filename):
             raise Problem('Архив не найден.',404)
         archive=data_dir()/'backups'/filename
-        if not archive.is_file():
-            raise Problem('Архив не найден.',404)
-        return archive.read_bytes(),200,[('Content-Type','application/zip'),('Content-Disposition','attachment; filename="'+filename+'"')]
+        payload=storage.get('backups/'+filename) if storage.cloud() else archive.read_bytes() if archive.is_file() else None
+        if payload is None: raise Problem('Архив не найден.',404)
+        return payload,200,[('Content-Type','application/zip'),('Content-Disposition','attachment; filename="'+filename+'"')]
     if path=='/api/calendar.ics' and method=='GET':
         from datetime import timedelta
         from .core import dt
