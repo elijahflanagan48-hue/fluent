@@ -9,6 +9,8 @@ import pg from 'pg';
 import { handle } from '../serverless/api.mjs';
 import { detectMime, decodeUpload } from '../serverless/storage.mjs';
 import { DateTime } from 'luxon';
+import { backup } from '../serverless/backup.mjs';
+import { unzipSync } from 'fflate';
 
 let admin,runtime;
 if (process.env.FLUENT_TEST_POSTGRES_DSN) {
@@ -132,4 +134,40 @@ test('owner setup remains closed after first owner exists',async()=>{
   const f=await fixture(); process.env.FLUENT_SETUP_TOKEN='a'.repeat(64);
   assert.equal((await f.request('/auth/setup',{setup_token:'a'.repeat(64),email:'new@example.test',name:'Owner',password:'Test-password-2026'},null)).status,409);
   assert.equal((await f.request('/auth/info',undefined,null)).body.setup_enabled,false);
+});
+test('direct file upload checks owner, content and one-use completion',async()=>{
+  const f=await fixture(),task=await f.request('/homework',{student_id:f.student,title:'Files',instructions:'Send',due_at:'2027-01-01T12:00:00Z'});
+  process.env.SUPABASE_URL='https://lvuugfbefimwnskcnvyg.supabase.co'; process.env.SUPABASE_SECRET_KEY='test-only-not-a-real-key';
+  const saved=globalThis.fetch,bytes=Buffer.from('%PDF-1.7\nTest'),calls=[];
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url,options});
+    assert.equal(options.redirect,'error'); assert.equal(options.headers.apikey,'test-only-not-a-real-key');
+    const path=new URL(url).pathname;
+    if(path.includes('/upload/sign/'))return Response.json({url:'/object/upload/sign/fluent-private/'+path.split('/').pop()+'?token=disposable-test'});
+    if(path.includes('/authenticated/'))return new Response(bytes);
+    return Response.json([]);
+  };
+  try {
+    const payload={filename:'answer.pdf',size:bytes.length,entity_type:'homework',entity_id:task.body.id};
+    assert.equal((await f.request('/files/upload-ticket',payload,f.other)).status,403); assert.equal(calls.length,0);
+    const ticket=await f.request('/files/upload-ticket',payload,f.student); assert.equal(ticket.status,200); assert.match(ticket.body.url,/^https:\/\/lvuugfbefimwnskcnvyg\.supabase\.co\/storage\/v1\/object\/upload\/sign\//);
+    assert.equal((await f.request('/files/upload-finish',{token:ticket.body.token},f.other)).status,403);
+    const finished=await f.request('/files/upload-finish',{token:ticket.body.token},f.student); assert.equal(finished.status,200);
+    assert.equal((await f.db.query('SELECT mime,size,student_id FROM files'))[0].mime,'application/pdf');
+    assert.equal((await f.request('/files/upload-finish',{token:ticket.body.token},f.student)).status,400);
+  } finally {globalThis.fetch=saved;delete process.env.SUPABASE_SECRET_KEY;}
+});
+test('backup uses separate private bucket and portable SQLite without sessions',async()=>{
+  const f=await fixture(),saved=globalThis.fetch;let archived;
+  process.env.SUPABASE_URL='https://lvuugfbefimwnskcnvyg.supabase.co';process.env.SUPABASE_SECRET_KEY='test-only-not-a-real-key';
+  globalThis.fetch=async(url,options={})=>{
+    assert.ok(url.includes('/fluent-backups'));
+    if(url.includes('/object/list/'))return Response.json([]);
+    archived=options.body;return Response.json({});
+  };
+  try {
+    const name=await backup(f.db,false);assert.match(name,/^fluent-[0-9TZ-]+\.zip$/);
+    const files=unzipSync(archived);assert.deepEqual(Object.keys(files),['fluent.sqlite3']);
+    assert.equal(Buffer.from(files['fluent.sqlite3']).subarray(0,15).toString(),'SQLite format 3');
+  } finally {globalThis.fetch=saved;delete process.env.SUPABASE_SECRET_KEY;}
 });

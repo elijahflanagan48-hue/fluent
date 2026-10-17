@@ -6,6 +6,9 @@
 [build.environment]
   NODE_VERSION = "24"
   NPM_FLAGS = "--ignore-scripts"
+  # Public project address and bucket names are identifiers, not credentials.
+  # DATABASE_URL and SUPABASE_SECRET_KEY remain covered by secrets scanning.
+  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,SUPABASE_BUCKET,SUPABASE_BACKUP_BUCKET,FLUENT_BASE_URL,AWS_LAMBDA_JS_RUNTIME"
 
 [functions]
   node_bundler = "esbuild"
