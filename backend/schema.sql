@@ -117,6 +117,7 @@ CREATE INDEX IF NOT EXISTS files_student ON files(student_id);
 CREATE INDEX IF NOT EXISTS files_entity ON files(entity_type,entity_id);
 CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id,created_at);
 CREATE INDEX IF NOT EXISTS messages_student ON messages(student_id,created_at);
+CREATE INDEX IF NOT EXISTS messages_author ON messages(author_id);
 CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(state,next_attempt);
 CREATE INDEX IF NOT EXISTS outbox_user ON outbox(user_id);
 CREATE INDEX IF NOT EXISTS students_referrer ON students(referrer_id);
