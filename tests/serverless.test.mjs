@@ -102,7 +102,7 @@ test('recurring lessons preserve wall time across DST and reject conflicts',asyn
   const lessons=await f.db.query('SELECT starts_at FROM lessons ORDER BY starts_at'); assert.equal(lessons[1].starts_at,'2027-03-28T09:00:00Z');
   assert.equal((await f.request('/lessons',{student_id:f.other,title:'Conflict',starts_at:'2027-03-28T09:10:00Z'})).status,409);
 });
-test('calendar reschedule enforces conflicts, ownership, slots and cutoff without changing balance',async()=>{
+test('teacher-only calendar reschedule rejects student requests and stale moves without changing balance',async()=>{
   const f=await fixture(),start=DateTime.utc().plus({days:10}).startOf('hour');
   const create=async(student,when)=>{const r=await f.request('/lessons',{student_id:student,title:'Drag fixture',starts_at:when.toISO(),duration:50});assert.equal(r.status,200);return r.body.ids[0];};
   const id=await create(f.student,start),blocked=await create(f.other,start.plus({hours:2}));
@@ -115,11 +115,13 @@ test('calendar reschedule enforces conflicts, ownership, slots and cutoff withou
   const slot=await f.request('/slots',{starts_at:start.plus({days:2}).toISO(),duration:60});assert.equal(slot.status,200);
   assert.equal((await f.request('/lessons/'+id+'/reschedule',{slot_id:slot.body.id},f.other)).status,403);
   assert.notEqual((await f.request('/lessons/'+id+'/reschedule',{starts_at:start.plus({days:3}).toISO()},f.student)).status,200,'student cannot choose arbitrary time');
-  assert.equal((await f.request('/lessons/'+id+'/reschedule',{slot_id:slot.body.id},f.student)).status,200);
-  assert.equal((await f.db.query('SELECT duration FROM lessons WHERE id=?',[id]))[0].duration,60);
-  assert.equal((await f.db.query('SELECT id FROM slots WHERE id=?',[slot.body.id])).length,0,'slot consumed once');
+  assert.equal((await f.request('/lessons/'+id+'/reschedule',{slot_id:slot.body.id},f.student)).status,403);
+  assert.equal((await f.db.query('SELECT duration FROM lessons WHERE id=?',[id]))[0].duration,50);
+  assert.equal((await f.db.query('SELECT id FROM slots WHERE id=?',[slot.body.id])).length,1,'student cannot consume slot by rescheduling');
+  assert.equal((await f.request('/lessons/'+id+'/reschedule',{starts_at:start.plus({days:3}).toISO(),expected_starts_at:original,duration:50})).status,409,'stale drag/undo cannot overwrite a newer move');
+  assert.equal((await f.request('/lessons/'+id+'/reschedule',{starts_at:start.plus({days:3}).toISO(),expected_starts_at:moved.toISO(),expected_duration:60,duration:50})).status,409,'stale duration rejected');
   const near=await create(f.student,DateTime.utc().plus({hours:1}));
-  assert.equal((await f.request('/lessons/'+near+'/reschedule',{slot_id:'missing'},f.student)).status,409,'cutoff applies before slot selection');
+  assert.equal((await f.request('/lessons/'+near+'/reschedule',{slot_id:'missing'},f.student)).status,403,'students can never reschedule');
   await f.db.query("UPDATE lessons SET status='completed' WHERE id=?",[blocked]);
   assert.equal((await f.request('/lessons/'+blocked+'/reschedule',{starts_at:start.plus({days:4}).toISO()})).status,409);
   assert.equal(await balance(f.db,f.student),0,'rescheduling never charges or credits lessons');

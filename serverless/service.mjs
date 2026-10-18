@@ -105,6 +105,7 @@ export async function bookSlot(db, user, id) {
   return { id: lesson };
 }
 export async function lessonAction(db, user, id, action, data) {
+  if (action === 'reschedule') teacher(user);
   const lesson = await one(db, 'SELECT * FROM lessons WHERE id=?', [id], true); owns(user, lesson.student_id);
   if (action === 'link' || action === 'note') {
     teacher(user); const column = action === 'link' ? 'meeting_url' : 'note';
@@ -130,11 +131,9 @@ export async function lessonAction(db, user, id, action, data) {
       await rows(db, 'UPDATE lessons SET status=?,updated_at=? WHERE id=?', [charged ? 'late_cancelled' : 'cancelled', now(), id]);
       if (charged) await insert(db, 'ledger', { id: uid(), student_id: lesson.student_id, delta: -1, reason: 'Поздняя отмена урока', source: 'lesson:' + id, created_at: now() });
     } else {
-      let start, duration;
-      if (user.role === 'student') {
-        if (late) throw new Problem('Срок самостоятельного переноса прошёл. Напишите преподавателю.', 409);
-        const slot = await one(db, 'SELECT * FROM slots WHERE id=?', [data.slot_id], true); start = slot.starts_at; duration = slot.duration;
-      } else { start = iso(data.starts_at); duration = integer(data.duration ?? lesson.duration, 15, 240); }
+      if (data.expected_starts_at && +dt(data.expected_starts_at) !== +dt(lesson.starts_at)) throw new Problem('Урок уже изменён. Обновите календарь.', 409);
+      if (data.expected_duration !== undefined && integer(data.expected_duration,15,240) !== lesson.duration) throw new Problem('Длительность урока уже изменена. Обновите календарь.', 409);
+      const start = iso(data.starts_at), duration = integer(data.duration ?? lesson.duration, 15, 240);
       if (+dt(start) <= Date.now()) throw new Problem('Выберите время в будущем.');
       await noConflict(db, start, duration, id);
       await rows(db, 'UPDATE lessons SET starts_at=?,duration=?,updated_at=? WHERE id=?', [start, duration, now(), id]);

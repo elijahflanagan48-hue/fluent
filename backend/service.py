@@ -171,6 +171,8 @@ def book_slot(db, user, slot_id):
 
 
 def lesson_action(db, user, lesson_id, action, data):
+    if action == 'reschedule':
+        teacher(user)
     lesson = one(db, 'SELECT * FROM lessons WHERE id=?', (lesson_id,), True)
     owns(user, lesson['student_id'])
     if action == 'link':
@@ -214,21 +216,17 @@ def lesson_action(db, user, lesson_id, action, data):
             if charged:
                 insert(db, 'ledger', id=uid(), student_id=lesson['student_id'], delta=-1, reason='Поздняя отмена урока', source='lesson:'+lesson_id, created_at=now())
         else:
-            if user['role']=='student':
-                if late:
-                    raise Problem('Срок самостоятельного переноса прошёл. Напишите преподавателю.', 409)
-                slot = one(db, 'SELECT * FROM slots WHERE id=?', (data.get('slot_id'),), True)
-                starts_at, duration = slot['starts_at'], slot['duration']
-            else:
-                starts_at = iso(data.get('starts_at'))
-                duration = integer(data.get('duration', lesson['duration']), 15, 240)
+            if data.get('expected_starts_at') and dt(data['expected_starts_at']) != dt(lesson['starts_at']):
+                raise Problem('Урок уже изменён. Обновите календарь.', 409)
+            if 'expected_duration' in data and integer(data['expected_duration'], 15, 240) != lesson['duration']:
+                raise Problem('Длительность урока уже изменена. Обновите календарь.', 409)
+            starts_at = iso(data.get('starts_at'))
+            duration = integer(data.get('duration', lesson['duration']), 15, 240)
             if dt(starts_at) <= dt(now()):
                 raise Problem('Выберите время в будущем.')
             no_conflict(db, starts_at, duration, lesson_id)
             db.execute('UPDATE lessons SET starts_at=?,duration=?,updated_at=? WHERE id=?', (starts_at, duration, now(), lesson_id))
             consume_slots(db,starts_at,duration)
-            if user['role']=='student':
-                db.execute('DELETE FROM slots WHERE id=?', (data['slot_id'],))
     else:
         raise Problem('Неизвестное действие.', 404)
     label = {'complete': 'Урок завершён', 'cancel': 'Урок отменён', 'reschedule': 'Урок перенесён'}[action]

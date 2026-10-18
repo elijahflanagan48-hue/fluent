@@ -198,11 +198,13 @@ class StudioTest(unittest.TestCase):
         self.assertEqual(self.s.post('/api/lessons/'+lesson+'/cancel',{})[0],403)
         self.assertEqual(self.s.post('/api/lessons/'+lesson+'/note',{'note':'bad'})[0],403)
 
-    def test_student_reschedules_only_to_free_slot(self):
+    def test_only_teacher_can_reschedule_even_with_free_slot(self):
         lesson=self.lesson(72)
         slot=self.assert_ok(self.t.post('/api/slots',{'starts_at':future(100),'duration':50}))['id']
-        self.assert_ok(self.s.post('/api/lessons/'+lesson+'/reschedule',{'slot_id':slot}))
-        with connect() as db:self.assertIsNone(one(db,'SELECT * FROM slots WHERE id=?',(slot,)))
+        self.assertEqual(self.s.post('/api/lessons/'+lesson+'/reschedule',{'slot_id':slot})[0],403)
+        self.assertEqual(self.s.post('/api/lessons/'+lesson+'/reschedule',{'starts_at':future(100)})[0],403)
+        with connect() as db:self.assertIsNotNone(one(db,'SELECT * FROM slots WHERE id=?',(slot,)))
+        self.assert_ok(self.t.post('/api/lessons/'+lesson+'/reschedule',{'starts_at':future(100),'duration':50}))
 
     def test_slot_booking_checks_balance_and_prevents_double_booking(self):
         slot=self.assert_ok(self.t.post('/api/slots',{'starts_at':future(100),'duration':50}))['id']
