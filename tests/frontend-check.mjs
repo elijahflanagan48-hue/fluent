@@ -11,7 +11,9 @@ const context=vm.createContext({
   Date,Intl,URL,location:{hash:'#overview'},console,
 });
 vm.runInContext(source.replace(/boot\(\);\s*$/,''),context);
-const at=new Date().toISOString();
+// Keep fixture away from midnight boundaries in the runner's timezone.
+const fixtureDate=new Date();fixtureDate.setUTCHours(10,0,0,0);
+const at=fixtureDate.toISOString();
 const fixture={
   user:{id:'teacher',name:'Test Teacher',role:'teacher',timezone:'Europe/Moscow',email:'t@example.test'},
   settings:{studio_name:'fluent.',cancel_hours:24,late_cancel_charge:true,referral_enabled:true,referral_bonus:1,sbp_url:'',sbp_qr_file_id:'',reminder_hours:24,low_balance:2},

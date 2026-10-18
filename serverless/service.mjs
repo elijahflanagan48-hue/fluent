@@ -15,7 +15,7 @@ export async function bootstrap(db, user) {
     ['settings','SELECT * FROM settings',[]],
     ['students','SELECT u.id,u.name,u.email,u.timezone,u.active,s.level,s.focus,s.private_notes,COALESCE((SELECT SUM(delta) FROM ledger WHERE student_id=u.id),0) AS balance FROM users u JOIN students s ON s.user_id=u.id WHERE '+(user.role==='teacher'?'1=1':'u.id=?')+' ORDER BY u.name',args],
     ['teachers',"SELECT id,name FROM users WHERE role='teacher'",[]],
-    ...[['lessons','lessons','starts_at'],['payments','payments','created_at DESC'],['ledger','ledger','created_at DESC'],['homework','homework','due_at'],['goals','goals','created_at DESC'],['progress','progress_notes','created_at'],['messages','messages','created_at,rowid']].map(([key,table,order])=>[key,'SELECT * FROM '+table+' WHERE '+clause+' ORDER BY '+order,args]),
+    ...[['lessons','lessons','starts_at'],['payments','payments','created_at DESC'],['ledger','ledger','created_at DESC'],['homework','homework','due_at'],['goals','goals','created_at DESC'],['progress','progress_notes','created_at'],['messages','messages','created_at,id']].map(([key,table,order])=>[key,'SELECT * FROM '+table+' WHERE '+clause+' ORDER BY '+order,args]),
     ['slots','SELECT * FROM slots WHERE starts_at>? ORDER BY starts_at',[now()]],
     ['packages','SELECT * FROM packages '+(user.role==='teacher'?'':'WHERE active=1')+' ORDER BY lessons',[]],
     ['materials','SELECT * FROM materials WHERE '+clause+' OR student_id IS NULL ORDER BY created_at DESC',args],
@@ -277,7 +277,7 @@ export async function activity(db,user,conversation=''){
     ["SELECT route,COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL AND route<>'referrals' GROUP BY route",[user.id]],
     ["SELECT * FROM notifications WHERE user_id=? AND route<>'referrals' ORDER BY created_at DESC LIMIT 100",[user.id]]
   ];
-  if(conversation)queries.push(['SELECT * FROM messages WHERE student_id=? ORDER BY created_at,rowid',[conversation]]);
+  if(conversation)queries.push(['SELECT * FROM messages WHERE student_id=? ORDER BY created_at,id',[conversation]]);
   const result=await readBatch(db,queries);
   return {notification_counts:Object.fromEntries(result[0].map(r=>[r.route,Number(r.count)])),notifications:result[1],...(conversation?{messages:result[2]}:{})};
 }

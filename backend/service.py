@@ -439,7 +439,7 @@ def activity(db,user,conversation=''):
     if conversation:
         owns(user,conversation)
         student_exists(db,conversation)
-        result['messages']=rows(db,'SELECT * FROM messages WHERE student_id=? ORDER BY created_at,rowid',(conversation,))
+        result['messages']=rows(db,'SELECT * FROM messages WHERE student_id=? ORDER BY created_at,id',(conversation,))
     return result
 
 
