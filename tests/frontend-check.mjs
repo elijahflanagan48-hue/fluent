@@ -23,6 +23,21 @@ const fixture={
 };
 context.fixture=fixture;
 vm.runInContext('S.user=fixture.user;S.data=fixture;S.conversation="student";',context);
+// The phone agenda must share desktop filtering, actions and escaping.
+vm.runInContext('S.calendarDate=new Date(fixture.lessons[0].starts_at);S.calendarView="week";',context);
+let calendar=vm.runInContext('calendarPage()',context);
+assert.ok(calendar.includes('class="mobile-agenda"'));
+assert.equal((calendar.match(/class="agenda-day/g)||[]).length,7,'phone week contains seven days');
+assert.ok(calendar.includes('class="agenda-lesson scheduled"'));
+assert.ok(!calendar.includes('<script>untrusted()'));
+assert.ok(calendar.includes('data-action="lesson-open" data-id="lesson"'));
+vm.runInContext('S.calendarView="month";',context);
+calendar=vm.runInContext('calendarPage()',context);
+assert.equal((calendar.match(/class="agenda-day/g)||[]).length,1,'phone month only shows days with lessons');
+vm.runInContext('S.studentFilter="another-student";',context);
+calendar=vm.runInContext('calendarPage()',context);
+assert.ok(!calendar.includes('class="agenda-lesson scheduled"'),'agenda respects student filter');
+vm.runInContext('S.studentFilter="";S.calendarView="week";',context);
 const teacherNavigation=vm.runInContext('renderNavigation(2)',context);
 assert.equal((teacherNavigation.match(/class="nav-group"/g)||[]).length,3,'teacher navigation is grouped');
 for(const route of vm.runInContext('allowedRoutes()',context)){
