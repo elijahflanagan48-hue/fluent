@@ -33,11 +33,36 @@ assert.ok(!calendar.includes('<script>untrusted()'));
 assert.ok(calendar.includes('data-action="lesson-open" data-id="lesson"'));
 vm.runInContext('S.calendarView="month";',context);
 calendar=vm.runInContext('calendarPage()',context);
-assert.equal((calendar.match(/class="agenda-day/g)||[]).length,1,'phone month only shows days with lessons');
+assert.equal((calendar.match(/class="agenda-day/g)||[]).length,new Date(new Date(at).getFullYear(),new Date(at).getMonth()+1,0).getDate(),'phone month includes empty days as drop targets');
 vm.runInContext('S.studentFilter="another-student";',context);
 calendar=vm.runInContext('calendarPage()',context);
 assert.ok(!calendar.includes('class="agenda-lesson scheduled"'),'agenda respects student filter');
 vm.runInContext('S.studentFilter="";S.calendarView="week";',context);
+calendar=vm.runInContext('calendarPage()',context);
+assert.ok(calendar.includes('timed-calendar'),'desktop week exposes a time grid');
+assert.ok(calendar.includes('data-drop-time="08:30"'),'half-hour drop targets');
+assert.ok(calendar.includes('data-start-minute="480"'),'time grid has a known origin');
+assert.ok(calendar.includes('data-drag-lesson="lesson"'),'scheduled teacher lessons are draggable');
+assert.equal(vm.runInContext('canDragLesson({...fixture.lessons[0],status:"completed"})',context),false);
+// Proposals must not mutate data or bypass student slot/cutoff restrictions.
+vm.runInContext(`S.data.lessons.push({...fixture.lessons[0],id:'move',starts_at:new Date(Date.now()+72*3600000).toISOString()});
+  S.data.slots.push({id:'drop-slot',starts_at:new Date(Date.now()+96*3600000).toISOString(),duration:50});`,context);
+const originalStart=vm.runInContext('S.data.lessons.find(l=>l.id==="move").starts_at',context);
+const proposed=vm.runInContext('calendarDropProposal("move",dateKey(S.data.slots[0].starts_at),"16:30")',context);
+assert.ok(vm.runInContext(`localInput(${JSON.stringify(proposed.starts_at)})`,context).endsWith('T16:30'),'drop respects account timezone');
+assert.equal(vm.runInContext('S.data.lessons.find(l=>l.id==="move").starts_at',context),originalStart,'drop is not a write');
+assert.throws(()=>vm.runInContext('calendarDropProposal("move","2000-01-01","16:30")',context),/будущем/);
+vm.runInContext('S.user={...fixture.user,id:"student",role:"student"};',context);
+assert.equal(vm.runInContext('canDragLesson(S.data.lessons.find(l=>l.id==="move"))',context),true);
+assert.equal(vm.runInContext('canDragLesson({...fixture.lessons[0],starts_at:new Date(Date.now()+3600000).toISOString()})',context),false,'cutoff blocks dragging');
+assert.equal(vm.runInContext('canDragLesson({...S.data.lessons.find(l=>l.id==="move"),student_id:"other"})',context),false,'cannot drag another student lesson');
+const studentDrop=vm.runInContext('calendarDropProposal("move",dateKey(S.data.slots[0].starts_at),localInput(S.data.slots[0].starts_at).slice(11))',context);
+assert.equal(studentDrop.slots[0].id,'drop-slot');
+assert.throws(()=>vm.runInContext('calendarDropProposal("move",dateKey(S.data.slots[0].starts_at),"01:17")',context),/свободного окна/);
+assert.equal(vm.runInContext('S.data.lessons.find(l=>l.id==="move").starts_at',context),originalStart,'student proposal is not a write');
+vm.runInContext('S.user={...fixture.user,timezone:"Europe/London"};',context);
+assert.throws(()=>vm.runInContext('calendarDropProposal("move","2027-03-28","01:30")',context),/Такого времени нет/,'nonexistent DST time rejected');
+vm.runInContext('S.user=fixture.user;',context);
 const teacherNavigation=vm.runInContext('renderNavigation(2)',context);
 assert.equal((teacherNavigation.match(/class="nav-group"/g)||[]).length,3,'teacher navigation is grouped');
 for(const route of vm.runInContext('allowedRoutes()',context)){
@@ -60,3 +85,4 @@ for(const route of vm.runInContext('allowedRoutes()',context)){
   assert.doesNotThrow(()=>vm.runInContext(`S.route=${JSON.stringify(route)};renderPage()`,context),route+' empty state');
 }
 console.log('Frontend: all teacher/student routes, escaping and empty states passed.');
+await import('./calendar-drag-check.mjs');

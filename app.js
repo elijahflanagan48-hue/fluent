@@ -86,28 +86,60 @@ function overviewPage(){
   return `<div class="hero"><div><span class="eyebrow">${teacher()?'Your teaching studio':'Your learning space'}</span><h1>${teacher()?'Хороший день,':'Hello,'}<br><em>${esc(S.user.name.split(' ')[0])}.</em></h1><p>${teacher()?`Ближайших уроков — ${upcoming.length}, работ на проверку — ${todo.length}. Всё важное для вашей практики здесь.`:'Маленькие шаги складываются в большой прогресс. Здесь ваше расписание, задания и новые достижения.'}</p></div><div class="quote"><span style="font:40px Georgia;line-height:.7">“</span><p>Small steps.<br>Real progress.<br>Your pace.</p><small>one lesson at a time</small></div></div><div class="metrics">${metrics.map(m=>`<article class="metric ${m[3]}"><span>${m[0]}</span><strong>${m[1]}</strong><small>${m[2]}</small></article>`).join('')}</div><div class="dashboard"><section class="panel"><div class="panel-header"><div><span class="eyebrow">Расписание</span><h2>Ближайшие уроки</h2></div><button class="text-button" data-route="calendar">Календарь ${icon('arrow')}</button></div>${upcoming.length?upcoming.map(lessonRow).join(''):empty('Здесь появятся ваши ближайшие занятия.',teacher()?'lesson-new':'','Добавить урок')}</section><div class="stack"><section class="panel"><div class="panel-header"><div><span class="eyebrow">Practice loop</span><h2>${teacher()?'Ждут проверки':'Нужно сделать'}</h2></div><span style="font:36px Georgia;color:var(--coral)">${String(todo.length).padStart(2,'0')}</span></div>${todo.length?todo.slice(0,3).map(t=>`<div class="item-row"><div class="square">${esc(t.kind[0])}</div><div class="grow"><strong>${esc(t.title)}</strong><small>${teacher()?esc(studentName(t.student_id)):fmt(t.due_at)}</small></div><button class="icon-button" data-action="homework-open" data-id="${t.id}" aria-label="Открыть ${esc(t.title)}">${icon('arrow')}</button></div>`).join(''):empty('Всё спокойно — новых работ пока нет.')}</section><section class="panel attention"><span class="eyebrow">${teacher()?'Оплаты':'Следующий шаг'}</span><strong>${teacher()?`${claims.length} ждут подтверждения`:'Keep showing up.'}</strong><p>${teacher()?'Ученики отметили оплату. Проверьте поступления и зачислите занятия.':'Выберите небольшую цель, которую приятно будет выполнить на этой неделе.'}</p>${btn(teacher()?'Проверить оплаты':'Мои цели',teacher()?'route-payments':'route-progress','','','arrow')}</section></div></div>`;
 }
 function lessonRow(l){return `<div class="lesson-row"><div class="lesson-time"><strong>${timeLabel(l.starts_at)}</strong><small>${fmt(l.starts_at)}</small></div><div class="lesson-info"><h3>${esc(teacher()?studentName(l.student_id):l.title)}</h3><p>${teacher()?esc(l.title)+' · ':''}${l.duration} мин</p></div>${btn('Открыть','lesson-open',l.id,'light small')}</div>`;}
+const canDragLesson=l=>l.status==='scheduled'&&(teacher()||(l.student_id===S.user.id&&new Date(l.starts_at)-Date.now()>=Number(S.data.settings.cancel_hours)*3600000));
+const dragAttributes=l=>canDragLesson(l)?`draggable="true" data-drag-lesson="${esc(l.id)}" title="Перетащите, чтобы перенести занятие"`:'';
+const clockMinutes=value=>{const [h,m]=localInput(value).slice(11).split(':').map(Number);return h*60+m;};
+const minuteLabel=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
+function calendarDropProposal(id,day,time=''){
+  const lesson=S.data.lessons.find(l=>l.id===id);
+  if(!lesson||!canDragLesson(lesson))throw new Error('Этот урок нельзя перенести самостоятельно.');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day))throw new Error('Выберите дату переноса.');
+  const value=day+'T'+(time||localInput(lesson.starts_at).slice(11));
+  if(teacher()){
+    const starts_at=localUTC(value);
+    if(new Date(starts_at)<=new Date())throw new Error('Выберите время в будущем.');
+    return {lesson,value,starts_at,duration:lesson.duration};
+  }
+  const slots=S.data.slots.filter(s=>dateKey(s.starts_at)===day&&new Date(s.starts_at)>new Date()&&(!time||localInput(s.starts_at).slice(11)===time));
+  if(!slots.length)throw new Error('На выбранное время нет свободного окна. Выберите другое или напишите преподавателю.');
+  return {lesson,value,slots};
+}
+function proposeCalendarDrop(id,day,time=''){
+  try{
+    const p=calendarDropProposal(id,day,time);
+    const before=`<p class="helper full">Было: ${esc(fmt(p.lesson.starts_at,{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}))} · ${esc(zone())}. Переносится только этот урок, не вся серия.</p>`;
+    if(teacher())formModal('Подтвердите перенос','lesson-reschedule',before+field('Новая дата и время · '+zone(),'starts_at','datetime-local',p.value,'required')+field('Длительность, минут','duration','number',p.duration,'min="15" max="240" required'),id,'Перенести урок');
+    else formModal('Подтвердите перенос','student-reschedule',before+select('Свободное время · '+zone(),'slot_id',p.slots.map(s=>[s.id,fmt(s.starts_at)+' '+timeLabel(s.starts_at)+' · '+s.duration+' мин'])),id,'Перенести урок');
+  }catch(e){toast(e.message,true);}
+}
 function calendarPage(){
   const base=new Date(S.calendarDate);const current=dateKey(new Date());let inner='';
   const lessons=selected(S.data.lessons);const forKey=key=>lessons.filter(l=>dateKey(l.starts_at)===key);
   const civilKey=day=>`${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
-  const event=l=>`<button class="calendar-lesson ${l.status}" data-action="lesson-open" data-id="${l.id}"><strong>${timeLabel(l.starts_at)}</strong>${esc(teacher()?studentName(l.student_id):l.title)}<small>${esc(teacher()?l.title:statusNames[l.status])}</small></button>`;
+  const event=(l,style='')=>`<button class="calendar-lesson ${l.status}" ${dragAttributes(l)} style="${style}" data-action="lesson-open" data-id="${l.id}"><strong>${timeLabel(l.starts_at)}</strong>${esc(teacher()?studentName(l.student_id):l.title)}<small>${esc(teacher()?l.title:statusNames[l.status])}</small></button>`;
   let title;const agendaDays=[];
   if(S.calendarView==='week'){
     base.setDate(base.getDate()-(base.getDay()+6)%7);base.setHours(12,0,0,0);const end=new Date(base);end.setDate(end.getDate()+6);
     title=base.getDate()+'–'+end.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});
     for(let i=0;i<7;i++){const day=new Date(base);day.setDate(day.getDate()+i);agendaDays.push(day);}
-    inner='<div class="week-calendar">'+Array.from({length:7},(_,i)=>{const day=new Date(base);day.setDate(day.getDate()+i);const key=civilKey(day);return `<div class="day-column"><div class="day-head ${key===current?'today':''}"><small>${day.toLocaleDateString('ru-RU',{weekday:'short'})}</small><strong>${day.getDate()}</strong></div>${forKey(key).map(event).join('')}</div>`;}).join('')+'</div>';
+    const periodKeys=agendaDays.map(civilKey),periodLessons=[...lessons,...(!teacher()?S.data.slots:[])].filter(l=>periodKeys.includes(dateKey(l.starts_at)));
+    const firstHour=Math.min(8,...periodLessons.map(l=>Math.floor(clockMinutes(l.starts_at)/60))),lastHour=Math.min(24,Math.max(22,...periodLessons.map(l=>Math.ceil((clockMinutes(l.starts_at)+l.duration)/60))));
+    const startMinute=firstHour*60,totalMinutes=(lastHour-firstHour)*60;
+    const ruler=`<div class="time-ruler"><div class="day-head">Время</div><div class="day-timeline" style="height:${totalMinutes}px">${Array.from({length:lastHour-firstHour},(_,i)=>`<span style="top:${i*60}px">${minuteLabel((i+firstHour)*60)}</span>`).join('')}</div></div>`;
+    inner='<div class="week-calendar timed-calendar">'+ruler+agendaDays.map(day=>{const key=civilKey(day);
+      const targets=teacher()?Array.from({length:totalMinutes/30},(_,i)=>`<div class="time-drop" data-drop-date="${key}" data-drop-time="${minuteLabel(startMinute+i*30)}" style="top:${i*30}px;height:30px"><span>${minuteLabel(startMinute+i*30)}</span></div>`).join(''):S.data.slots.filter(s=>dateKey(s.starts_at)===key&&new Date(s.starts_at)>new Date()).map(s=>`<div class="time-drop available-drop" data-drop-date="${key}" data-drop-time="${localInput(s.starts_at).slice(11)}" style="top:${clockMinutes(s.starts_at)-startMinute}px;height:${s.duration}px"><span>${timeLabel(s.starts_at)} · свободно</span></div>`).join('');
+      return `<div class="day-column" data-drop-date="${key}"><div class="day-head ${key===current?'today':''}"><small>${day.toLocaleDateString('ru-RU',{weekday:'short'})}</small><strong>${day.getDate()}</strong></div><div class="day-timeline" data-start-minute="${startMinute}" style="height:${totalMinutes}px">${targets}${forKey(key).map(l=>event(l,`top:${clockMinutes(l.starts_at)-startMinute}px;height:${Math.max(28,l.duration)}px`)).join('')}</div></div>`;
+    }).join('')+'</div>';
   }else{
     const month=base.getMonth();base.setDate(1);
     for(let i=0;i<new Date(base.getFullYear(),month+1,0).getDate();i++){const day=new Date(base);day.setDate(i+1);agendaDays.push(day);}
     base.setDate(1-(base.getDay()+6)%7);title=S.calendarDate.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
-    inner='<div class="month-calendar">'+Array.from({length:42},(_,i)=>{const day=new Date(base);day.setDate(day.getDate()+i);const key=civilKey(day);return `<div class="month-cell ${key===current?'today':''} ${day.getMonth()!==month?'other-month':''}"><strong>${day.getDate()}</strong>${forKey(key).map(event).join('')}</div>`;}).join('')+'</div>';
+    inner='<div class="month-calendar">'+Array.from({length:42},(_,i)=>{const day=new Date(base);day.setDate(day.getDate()+i);const key=civilKey(day);return `<div data-drop-date="${key}" class="month-cell ${key===current?'today':''} ${day.getMonth()!==month?'other-month':''}"><strong>${day.getDate()}</strong>${forKey(key).map(l=>event(l)).join('')}</div>`;}).join('')+'</div>';
   }
   const agenda=agendaDays.map(day=>{const key=civilKey(day),items=forKey(key).slice().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
-    if(S.calendarView==='month'&&!items.length)return '';
-    return `<section class="agenda-day ${key===current?'today':''}"><h2>${esc(day.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'}))}${key===current?'<span>Сегодня</span>':''}</h2>${items.length?items.map(l=>`<button class="agenda-lesson ${l.status}" data-action="lesson-open" data-id="${l.id}"><time datetime="${esc(l.starts_at)}">${timeLabel(l.starts_at)}</time><span><strong>${esc(teacher()?studentName(l.student_id):l.title)}</strong><small>${teacher()?esc(l.title)+' · ':''}${l.duration} мин · ${esc(statusNames[l.status])}</small></span>${icon('arrow')}</button>`).join(''):'<p class="agenda-empty">Нет занятий</p>'}</section>`;
+    return `<section data-drop-date="${key}" class="agenda-day ${key===current?'today':''}"><h2>${esc(day.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'}))}${key===current?'<span>Сегодня</span>':''}</h2>${!teacher()?S.data.slots.filter(s=>dateKey(s.starts_at)===key&&new Date(s.starts_at)>new Date()).map(s=>`<div class="agenda-slot" data-drop-date="${key}" data-drop-time="${localInput(s.starts_at).slice(11)}">${timeLabel(s.starts_at)} · свободно · ${s.duration} мин</div>`).join(''):''}${items.length?items.map(l=>`<div class="agenda-entry"><button class="agenda-lesson ${l.status}" ${dragAttributes(l)} data-action="lesson-open" data-id="${l.id}"><time datetime="${esc(l.starts_at)}">${timeLabel(l.starts_at)}</time><span><strong>${esc(teacher()?studentName(l.student_id):l.title)}</strong><small>${teacher()?esc(l.title)+' · ':''}${l.duration} мин · ${esc(statusNames[l.status])}</small></span>${icon('arrow')}</button>${canDragLesson(l)?`<button class="lesson-drag-handle" data-drag-handle="${esc(l.id)}" aria-label="Перетащить занятие ${esc(l.title)}" title="Удерживайте и перетащите на другой день">⠿</button>`:''}</div>`).join(''):'<p class="agenda-empty">Нет занятий</p>'}</section>`;
   }).join('')||empty('В этом месяце пока нет занятий.');
-  return heading('Make time for progress','Календарь',`Занятия и свободные окна · ${esc(zone())}`,teacher()?btn('Новый урок','lesson-new','','','plus'):'')+`<div class="filters">${filterSelect()}<a href="/api/calendar.ics" class="text-button">${icon('download')} Скачать календарь</a></div><div class="calendar-toolbar"><button class="icon-button" data-action="calendar-prev" aria-label="Предыдущий период">←</button><h2>${esc(title)}</h2><button class="icon-button" data-action="calendar-next" aria-label="Следующий период">→</button><button class="text-button" data-action="calendar-today">Сегодня</button><div class="spacer"></div><button class="chip ${S.calendarView==='week'?'active':''}" data-action="calendar-week">Неделя</button><button class="chip ${S.calendarView==='month'?'active':''}" data-action="calendar-month">Месяц</button></div><div class="calendar-scroll">${inner}</div><div class="mobile-agenda" aria-label="Расписание по дням">${agenda}</div><section class="panel section-space"><div class="panel-header"><div><span class="eyebrow">Свободные окна</span><h2>Время для нового урока</h2></div>${teacher()?btn('Добавить окно','slot-new','','light small','plus'):''}</div><div class="slots">${S.data.slots.length?S.data.slots.map(s=>`<button class="slot-button" data-action="slot-open" data-id="${s.id}">${fmt(s.starts_at)} · ${timeLabel(s.starts_at)}<small>${s.duration} минут</small></button>`).join(''):empty('Свободных окон пока нет. Можно согласовать время в сообщениях.')}</div></section><p class="policy">Самостоятельный перенос — не позднее чем за ${S.data.settings.cancel_hours} ч. ${S.data.settings.late_cancel_charge?'При более поздней отмене списывается одно занятие.':'Поздняя отмена не списывает занятие.'}</p>`;
+  return heading('Make time for progress','Календарь',`Занятия и свободные окна · ${esc(zone())}`,teacher()?btn('Новый урок','lesson-new','','','plus'):'')+`<div class="filters">${filterSelect()}<a href="/api/calendar.ics" class="text-button">${icon('download')} Скачать календарь</a></div><div class="calendar-toolbar"><button class="icon-button" data-action="calendar-prev" aria-label="Предыдущий период">←</button><h2>${esc(title)}</h2><button class="icon-button" data-action="calendar-next" aria-label="Следующий период">→</button><button class="text-button" data-action="calendar-today">Сегодня</button><div class="spacer"></div><button class="chip ${S.calendarView==='week'?'active':''}" data-action="calendar-week">Неделя</button><button class="chip ${S.calendarView==='month'?'active':''}" data-action="calendar-month">Месяц</button></div><p class="calendar-drag-help"><span class="desktop-drag-help">Перетащите занятие на нужный день и время. </span><span class="phone-drag-help">Удерживайте ⠿ справа от занятия и перетащите на другой день. Время можно уточнить перед сохранением. </span>${teacher()?'Перед переносом появится подтверждение.':'Ученику доступны только свободные окна и переносы в пределах правил студии.'}</p><p id="calendar-drag-status" class="calendar-drag-status" role="status" aria-live="polite"></p><div class="calendar-scroll">${inner}</div><div class="mobile-agenda" aria-label="Расписание по дням">${agenda}</div><section class="panel section-space"><div class="panel-header"><div><span class="eyebrow">Свободные окна</span><h2>Время для нового урока</h2></div>${teacher()?btn('Добавить окно','slot-new','','light small','plus'):''}</div><div class="slots">${S.data.slots.length?S.data.slots.map(s=>`<button class="slot-button" data-action="slot-open" data-id="${s.id}">${fmt(s.starts_at)} · ${timeLabel(s.starts_at)}<small>${s.duration} минут</small></button>`).join(''):empty('Свободных окон пока нет. Можно согласовать время в сообщениях.')}</div></section><p class="policy">Самостоятельный перенос — не позднее чем за ${S.data.settings.cancel_hours} ч. ${S.data.settings.late_cancel_charge?'При более поздней отмене списывается одно занятие.':'Поздняя отмена не списывает занятие.'}</p>`;
 }
 function studentsPage(){
   const people=S.data.students.filter(s=>(s.name+' '+s.email+' '+s.focus).toLowerCase().includes(S.studentQuery.toLowerCase()));
@@ -307,6 +339,100 @@ function showSetup(){
 }
 async function boot(){try{const info=await api('/auth/info');S.demo=info.demo;if(!info.ready){if(info.setup_enabled)showSetup();else $('#app').innerHTML='<div class="boot"><span class="brand">fluent<span>.</span></span><h2>Студия ждёт открытия</h2><p>Создайте учётную запись преподавателя по инструкции запуска проекта.</p></div>';return;}try{const r=await api('/auth/me');S.user=r.user;S.csrf=r.csrf;}catch{}if(S.user&&!/^#(invite|reset)=/.test(location.hash)){S.route=location.hash.slice(1)||'overview';await refresh();}else showAuth();}catch(e){if(location.hostname.endsWith('.github.io'))$('#app').innerHTML='<div class="boot" style="padding:32px;text-align:center"><span class="brand">fluent<span>.</span></span><h1 style="font-size:40px">Ваша студия<br>уже открыта.</h1><p>Личный кабинет работает по отдельному защищённому адресу.</p><a class="button" href="https://fluent-studio.onrender.com/">Открыть кабинет →</a></div>';else showAuth('login',e.message);}}
 
+// Both pointer gestures and desktop drag/drop reuse the existing protected
+// reschedule endpoint. A drop only opens confirmation; it never writes data.
+const calendarDrag={lessonId:'',pending:null,timer:0,frame:0,x:0,y:0,target:null,ghost:null,suppressUntil:0};
+function clearCalendarDrag(){
+  clearTimeout(calendarDrag.timer);cancelAnimationFrame(calendarDrag.frame);
+  calendarDrag.target?.element.classList.remove('calendar-drop-over');
+  calendarDrag.ghost?.remove();document.body.classList.remove('calendar-dragging');
+  document.querySelectorAll('.lesson-dragging').forEach(el=>el.classList.remove('lesson-dragging'));
+  const status=$('#calendar-drag-status');if(status)status.textContent='';
+  Object.assign(calendarDrag,{lessonId:'',pending:null,timer:0,frame:0,target:null,ghost:null});
+}
+function calendarDropAt(x,y){
+  const hit=document.elementFromPoint(x,y),el=hit?.closest('[data-drop-date]');
+  if(!el)return null;
+  const timeline=hit.closest('.day-timeline'),dayColumn=hit.closest('.day-column[data-drop-date]');
+  if(timeline&&dayColumn&&teacher()){
+    const minute=Math.min(1410,Math.max(0,Number(timeline.dataset.startMinute)+Math.floor((y-timeline.getBoundingClientRect().top)/30)*30));
+    return {element:el,day:dayColumn.dataset.dropDate,time:minuteLabel(minute)};
+  }
+  return {element:el,day:el.dataset.dropDate,time:el.dataset.dropTime||''};
+}
+function trackCalendarDrag(x,y){
+  calendarDrag.x=x;calendarDrag.y=y;
+  const target=calendarDropAt(x,y);
+  if(calendarDrag.target?.element!==target?.element){calendarDrag.target?.element.classList.remove('calendar-drop-over');target?.element.classList.add('calendar-drop-over');}
+  calendarDrag.target=target;
+  if(calendarDrag.ghost){calendarDrag.ghost.style.left=Math.min(x+14,window.innerWidth-230)+'px';calendarDrag.ghost.style.top=Math.max(10,y-64)+'px';}
+  const status=$('#calendar-drag-status');
+  const message=target?'Отпустите: '+target.day.split('-').reverse().join('.')+(target.time?' · '+target.time:' · время уточним'):'Перетащите на нужный день. Escape — отмена.';
+  if(status&&status.textContent!==message)status.textContent=message;
+}
+function scrollCalendarDrag(){
+  if(!calendarDrag.lessonId)return;
+  const {x,y}=calendarDrag,scroller=$('.calendar-scroll'),box=scroller?.getBoundingClientRect();
+  if(box&&getComputedStyle(scroller).display!=='none'&&x>=box.left&&x<=box.right&&y>=box.top&&y<=box.bottom){
+    scroller.scrollBy(x<box.left+40?-12:x>box.right-40?12:0,y<box.top+48?-12:y>box.bottom-48?12:0);
+  }
+  window.scrollBy(0,y<70?-12:y>window.innerHeight-70?12:0);
+  trackCalendarDrag(x,y);calendarDrag.frame=requestAnimationFrame(scrollCalendarDrag);
+}
+function startPointerCalendarDrag(){
+  const p=calendarDrag.pending;if(!p)return;
+  const l=S.data.lessons.find(l=>l.id===p.id);if(!l||!canDragLesson(l)){clearCalendarDrag();return;}
+  calendarDrag.lessonId=p.id;document.body.classList.add('calendar-dragging');p.handle.classList.add('lesson-dragging');
+  const ghost=document.createElement('div');ghost.className='calendar-drag-ghost';ghost.textContent=timeLabel(l.starts_at)+' · '+(teacher()?studentName(l.student_id):l.title);document.body.append(ghost);calendarDrag.ghost=ghost;
+  trackCalendarDrag(calendarDrag.x,calendarDrag.y);calendarDrag.frame=requestAnimationFrame(scrollCalendarDrag);
+}
+document.addEventListener('dragstart',e=>{
+  const el=e.target.closest('[data-drag-lesson]');if(!el)return;
+  if(calendarDrag.pending){e.preventDefault();if(!calendarDrag.lessonId)startPointerCalendarDrag();return;}
+  const l=S.data?.lessons.find(l=>l.id===el.dataset.dragLesson);if(!l||!canDragLesson(l)){e.preventDefault();return;}
+  clearCalendarDrag();calendarDrag.lessonId=l.id;calendarDrag.x=e.clientX;calendarDrag.y=e.clientY;
+  e.dataTransfer.setData('text/plain',l.id);e.dataTransfer.effectAllowed='move';el.classList.add('lesson-dragging');document.body.classList.add('calendar-dragging');calendarDrag.frame=requestAnimationFrame(scrollCalendarDrag);
+});
+document.addEventListener('dragover',e=>{
+  if(!calendarDrag.lessonId)return;trackCalendarDrag(e.clientX,e.clientY);
+  if(calendarDrag.target){e.preventDefault();e.dataTransfer.dropEffect='move';}
+});
+document.addEventListener('drop',e=>{
+  if(!calendarDrag.lessonId)return;e.preventDefault();const id=calendarDrag.lessonId,target=calendarDropAt(e.clientX,e.clientY);
+  clearCalendarDrag();calendarDrag.suppressUntil=Date.now()+450;
+  if(target)proposeCalendarDrop(id,target.day,target.time);
+});
+document.addEventListener('dragend',()=>clearCalendarDrag());
+document.addEventListener('pointerdown',e=>{
+  const handle=e.target.closest('[data-drag-handle]'),lesson=e.pointerType==='mouse'?e.target.closest('[data-drag-lesson]'):null,source=handle||lesson;
+  if(!source||e.button!==0)return;
+  if(handle)e.preventDefault();clearCalendarDrag();calendarDrag.pending={id:handle?.dataset.dragHandle||lesson.dataset.dragLesson,handle:source,isHandle:!!handle,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY};calendarDrag.x=e.clientX;calendarDrag.y=e.clientY;source.setPointerCapture(e.pointerId);
+  if(handle){if(e.pointerType==='mouse')startPointerCalendarDrag();else calendarDrag.timer=setTimeout(startPointerCalendarDrag,320);}
+});
+document.addEventListener('pointermove',e=>{
+  const p=calendarDrag.pending;if(!p||p.pointerId!==e.pointerId)return;
+  const distance=Math.hypot(e.clientX-p.startX,e.clientY-p.startY);
+  if(!calendarDrag.lessonId&&e.pointerType==='mouse'&&distance>6)startPointerCalendarDrag();
+  else if(!calendarDrag.lessonId&&distance>10){clearCalendarDrag();return;}
+  if(calendarDrag.lessonId){e.preventDefault();trackCalendarDrag(e.clientX,e.clientY);}
+},{passive:false});
+document.addEventListener('pointerup',e=>{
+  const p=calendarDrag.pending;if(!p||p.pointerId!==e.pointerId)return;
+  const moved=calendarDrag.lessonId&&Math.hypot(e.clientX-p.startX,e.clientY-p.startY)>8,target=calendarDropAt(e.clientX,e.clientY);
+  clearCalendarDrag();if(!moved&&!p.isHandle)return;calendarDrag.suppressUntil=Date.now()+450;
+  if(moved){if(target)proposeCalendarDrop(p.id,target.day,target.time);}
+  else action('lesson-reschedule',p.id).catch(err=>toast(err.message,true));
+});
+document.addEventListener('pointercancel',()=>clearCalendarDrag());
+document.addEventListener('contextmenu',e=>{if(e.target.closest('[data-drag-handle]'))e.preventDefault();});
+document.addEventListener('click',e=>{
+  if(Date.now()<calendarDrag.suppressUntil){e.preventDefault();e.stopImmediatePropagation();return;}
+  const handle=e.target.closest('[data-drag-handle]');if(handle){e.preventDefault();e.stopImmediatePropagation();action('lesson-reschedule',handle.dataset.dragHandle).catch(err=>toast(err.message,true));}
+},true);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&(calendarDrag.lessonId||calendarDrag.pending)){e.preventDefault();clearCalendarDrag();}});
+window.addEventListener('hashchange',()=>clearCalendarDrag());
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')clearCalendarDrag();});
+
 document.addEventListener('click',async e=>{
   const route=e.target.closest('[data-route]');if(route){e.preventDefault();navigate(route.dataset.route);return;}
   const el=e.target.closest('[data-action]');if(!el||el.disabled)return;e.preventDefault();const name=el.dataset.action;
@@ -324,5 +450,5 @@ $('#modal').addEventListener('cancel',()=>stopRecording());
 $('#modal').addEventListener('click',e=>{if(e.target===$('#modal')){const box=$('#modal').getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)closeModal();}});
 window.addEventListener('hashchange',()=>{if(S.user&&!/^#(invite|reset)=/.test(location.hash)){S.route=location.hash.slice(1)||'overview';draw();window.scrollTo(0,0);}else showAuth();});
 window.addEventListener('beforeunload',()=>stopRecording());
-setInterval(()=>{if(S.user&&document.visibilityState==='visible'&&!$('#modal').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))refresh().catch(()=>{});},60000);
+setInterval(()=>{if(S.user&&document.visibilityState==='visible'&&!calendarDrag.lessonId&&!calendarDrag.pending&&!$('#modal').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))refresh().catch(()=>{});},60000);
 boot();

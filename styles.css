@@ -412,3 +412,42 @@ dialog{max-width:720px;border-radius:28px;box-shadow:0 35px 110px rgba(22,28,23,
 @media(prefers-reduced-motion:reduce){
   .sidebar,.sidebar-backdrop{transition:none}
 }
+
+/* Drag-to-reschedule: desktop time grid and touch-safe mobile handles. */
+.calendar-drag-help{font-size:13px;line-height:1.7;margin:0 0 16px}
+.phone-drag-help{display:none}
+.calendar-drag-status:empty{display:none}
+.calendar-drag-status:not(:empty){position:fixed;left:50%;bottom:max(20px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:45;max-width:calc(100vw - 32px);padding:13px 20px;border-radius:16px;background:var(--ink);color:var(--paper);font-size:13px;box-shadow:var(--shadow);pointer-events:none}
+.calendar-scroll:has(.timed-calendar){max-height:700px;overscroll-behavior:contain}
+.timed-calendar{min-width:850px;grid-template-columns:50px repeat(7,minmax(0,1fr))}
+.timed-calendar .day-column{padding:0;min-height:0}
+.timed-calendar .day-head{height:90px;margin:0;position:sticky;top:0;z-index:5;background:var(--paper)}
+.timed-calendar .day-head.today{background:var(--lime)}
+.time-ruler .day-head{font-size:9px;line-height:1.4;font-family:inherit;letter-spacing:0;overflow-wrap:anywhere;display:flex;align-items:center;padding:6px}
+.day-timeline{position:relative;background:repeating-linear-gradient(to bottom,transparent 0,transparent 29px,#deddd255 29px,#deddd255 30px,transparent 30px,transparent 59px,var(--line) 59px,var(--line) 60px);overflow:hidden}
+.time-ruler{border-right:1px solid var(--line)}
+.time-ruler .day-timeline>span{position:absolute;right:7px;font-size:10px;color:var(--muted);padding-top:4px}
+.time-drop{position:absolute;left:0;right:0;z-index:1;border:1px solid transparent}
+.time-drop>span{display:none;padding:3px;font-size:10px;color:var(--ink)}
+.calendar-dragging .time-drop:hover>span,.time-drop.calendar-drop-over>span,.available-drop>span{display:block}
+.available-drop{background:#d2f58a70;border:1px dashed #92a966;overflow:hidden}
+.timed-calendar .calendar-lesson{position:absolute;left:3px;right:3px;width:calc(100% - 6px);margin:0;z-index:2;padding:4px 7px;overflow:hidden;border-radius:7px;font-size:10px;line-height:1.3}
+.timed-calendar .calendar-lesson strong{font-size:10px}.timed-calendar .calendar-lesson small{margin-top:2px;font-size:9px}
+[data-drag-lesson]{cursor:grab}
+.calendar-drop-over{outline:2px solid #6c883c;outline-offset:-2px;background-color:#d2f58a88!important}
+.lesson-dragging{opacity:.45}
+.calendar-dragging,.calendar-dragging *{cursor:grabbing!important}
+.calendar-drag-ghost{position:fixed;z-index:60;pointer-events:none;width:220px;max-width:calc(100vw - 32px);padding:14px 16px;background:var(--ink);color:var(--paper);border:1px solid var(--lime);border-radius:16px;box-shadow:0 12px 35px #0003;font-size:13px;overflow-wrap:anywhere}
+.lesson-drag-handle{display:none}
+@media(max-width:620px){
+  .desktop-drag-help{display:none}.phone-drag-help{display:inline}
+  .calendar-drag-help{font-size:12px;margin:0 0 20px}
+  .agenda-entry{position:relative;display:flex;align-items:center;border-top:1px solid var(--line)}
+  .agenda-entry .agenda-lesson{border-top:0;flex:1;min-width:0;padding:15px 0}
+  .agenda-entry:has(.lesson-drag-handle) .agenda-lesson{grid-template-columns:43px minmax(0,1fr)}
+  .agenda-entry:has(.lesson-drag-handle) .agenda-lesson>svg{display:none}
+  .lesson-drag-handle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;min-height:48px;margin-left:5px;background:var(--bg);border:1px solid var(--line);border-radius:12px;color:var(--ink);font-size:28px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:grab}
+  .agenda-slot{padding:12px;margin:8px 0;background:#d2f58a55;border:1px dashed #92a966;border-radius:12px;font-size:12px;line-height:1.5}
+  .agenda-day.calendar-drop-over{outline-offset:0}
+  .calendar-drag-status:not(:empty){font-size:12px;width:calc(100% - 32px);text-align:center}
+}
