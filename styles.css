@@ -504,3 +504,27 @@ dialog{max-width:720px;border-radius:28px;box-shadow:0 35px 110px rgba(22,28,23,
   .view-day .calendar-lesson strong{font-size:12px}.view-day .event-name-full{display:block;font-size:14px}.view-day .event-name-short{display:none!important}.view-day .calendar-lesson small{font-size:12px}
   .view-day .lesson-drag-handle{width:40px;min-width:40px}
 }
+
+/* Stable app shell: background updates never restart page/menu animations. */
+.page{animation:none}
+.nav-item{transition:background-color .18s ease,color .18s ease}
+.nav-count{min-width:22px;height:22px;padding:2px 6px!important;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+body.menu-open{overflow:hidden}
+dialog[open]{animation:dialog-enter .22s cubic-bezier(.22,.61,.36,1)}
+dialog::backdrop{background:rgba(30,32,27,.38);backdrop-filter:blur(5px)}
+.bubble.sending{opacity:.7}.bubble.failed{outline:1px solid var(--coral)}
+.message-retry{display:block;min-height:44px;padding:8px 0 0;background:none;border:0;color:inherit;text-decoration:underline;font-size:12px;font-weight:600}
+button[aria-busy="true"]:after{content:'';width:14px;height:14px;flex-shrink:0;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:busy-spin .7s linear infinite}
+.chat-input input{transition:border-color .18s,box-shadow .18s}
+input[readonly]{background:#f0efe7;color:var(--muted);cursor:default}
+@keyframes dialog-enter{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
+@media(max-width:900px){
+  .sidebar{transition:transform .3s cubic-bezier(.22,.61,.36,1),visibility 0s .3s;will-change:transform}
+  .sidebar.open{transition:transform .3s cubic-bezier(.22,.61,.36,1),visibility 0s 0s}
+  .sidebar-backdrop{transition:opacity .28s ease}
+}
+@media(hover:none){.button:hover,.task-card:hover,.student-card:hover{transform:none}}
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}

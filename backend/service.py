@@ -22,6 +22,7 @@ def scoped(user, column='student_id'):
 def bootstrap(db, user):
     clause, args = scoped(user)
     cfg = settings(db)
+    cfg['referral_enabled'], cfg['referral_bonus'] = False, 0
     people = rows(db, "SELECT u.id,u.name,u.email,u.timezone,u.active,s.level,s.focus,s.private_notes,s.referral_code,s.referrer_id FROM users u JOIN students s ON s.user_id=u.id WHERE "+('1=1' if user['role']=='teacher' else 'u.id=?')+' ORDER BY u.name', args)
     for person in people:
         person['balance'] = balance(db, person['id'])
@@ -54,11 +55,10 @@ def bootstrap(db, user):
         if can_read_file(db, user, file):
             result['files'].append(file)
     if user['role'] == 'teacher':
-        result['referrals'] = rows(db, 'SELECT u.id,u.name,s.referrer_id,s.referral_rewarded FROM students s JOIN users u ON u.id=s.user_id WHERE s.referrer_id IS NOT NULL')
         result['deliveries'] = rows(db, 'SELECT channel,state,COUNT(*) AS count FROM outbox GROUP BY channel,state')
-    else:
-        # Only the count and reward state are shared, not referred students' identities.
-        result['referrals'] = rows(db, 'SELECT referral_rewarded FROM students WHERE referrer_id=?', (user['id'],))
+    result['referrals'] = []
+    result['notification_counts'] = notification_counts(db, user)
+    result['notifications'] = [n for n in result['notifications'] if n['route'] != 'referrals']
     return result
 
 
@@ -68,13 +68,6 @@ def add_student(db, user, data):
     if one(db, 'SELECT id FROM users WHERE email=?', (addr,)):
         raise Problem('Ученик с таким email уже существует.', 409)
     referrer = None
-    if data.get('referral_code'):
-        if not settings(db)['referral_enabled']:
-            raise Problem('Реферальная программа выключена.')
-        match = one(db, 'SELECT user_id FROM students WHERE referral_code=?', (text(data['referral_code'], 30).upper(),))
-        if not match:
-            raise Problem('Реферальный код не найден.')
-        referrer = match['user_id']
     student_id = uid()
     insert(db, 'users', id=student_id, email=addr, name=name, role='student', timezone=validate_zone(data.get('timezone', 'Europe/Moscow')), created_at=now())
     insert(db, 'students', user_id=student_id, level=text(data.get('level', 'B1'), 20), focus=text(data.get('focus', ''), 1000),
@@ -226,6 +219,7 @@ def lesson_action(db, user, lesson_id, action, data):
                 raise Problem('Выберите время в будущем.')
             no_conflict(db, starts_at, duration, lesson_id)
             db.execute('UPDATE lessons SET starts_at=?,duration=?,updated_at=? WHERE id=?', (starts_at, duration, now(), lesson_id))
+            db.execute("UPDATE homework SET due_at=? WHERE student_id=? AND status='assigned' AND due_at=?", (starts_at, lesson['student_id'], lesson['starts_at']))
             consume_slots(db,starts_at,duration)
     else:
         raise Problem('Неизвестное действие.', 404)
@@ -270,15 +264,6 @@ def grant_payment(db, payment, user, reference):
         raise Problem('Этот платёж нельзя подтвердить.', 409)
     db.execute("UPDATE payments SET status='paid',paid_at=?,reference=? WHERE id=?", (now(), reference, payment['id']))
     insert(db, 'ledger', id=uid(), student_id=payment['student_id'], delta=payment['lessons'], reason='Оплата пакета занятий', source='payment:'+payment['id'], created_at=now())
-    student = one(db, 'SELECT * FROM students WHERE user_id=?', (payment['student_id'],), True)
-    cfg = settings(db)
-    paid_count=db.execute("SELECT COUNT(*) FROM payments WHERE student_id=? AND status='paid'",(payment['student_id'],)).fetchone()[0]
-    if paid_count==1 and cfg['referral_enabled'] and student['referrer_id'] and not student['referral_rewarded']:
-        bonus = cfg['referral_bonus']
-        if bonus:
-            insert(db, 'ledger', id=uid(), student_id=student['referrer_id'], delta=bonus, reason='Бонус за приглашённого ученика', source='referral:'+payment['id'], created_at=now())
-            notify(db, student['referrer_id'], 'Бонус за рекомендацию', 'На баланс начислены бонусные занятия: '+str(bonus), 'referrals', 'referral:'+payment['student_id'])
-        db.execute('UPDATE students SET referral_rewarded=1 WHERE user_id=?', (payment['student_id'],))
     notify(db, payment['student_id'], 'Оплата подтверждена', 'Зачислено занятий: '+str(payment['lessons']), 'payments', 'paid:'+payment['id'])
     audit(db, user, 'payment.confirmed', payment['id'])
     return {'ok': True}
@@ -293,7 +278,7 @@ def payment_action(db, user, payment_id, action, data):
         if payment['status'] != 'pending':
             raise Problem('Оплата уже обработана.', 409)
         db.execute("UPDATE payments SET status='claimed' WHERE id=?", (payment_id,))
-        notify_teacher(db, 'Ученик отметил оплату', 'Проверьте поступление '+str(payment['amount']//100)+' ₽ в Т-Банке.', 'payments', 'claimed:'+payment_id)
+        notify_teacher(db, 'Ученик отметил оплату', 'Проверьте поступление '+str(payment['amount']//100)+' ₽ в банке.', 'payments', 'claimed:'+payment_id)
         return {'ok': True}
     teacher(user)
     if action == 'confirm':
@@ -326,9 +311,13 @@ def create_homework(db, user, data):
     teacher(user)
     student_exists(db, data.get('student_id'))
     assignment_id = uid()
-    insert(db, 'homework', id=assignment_id, student_id=data['student_id'], title=text(data.get('title'), 150, True), kind=text(data.get('kind','Practice'), 40), instructions=text(data.get('instructions'), 15000, True), due_at=iso(data.get('due_at')), created_at=now())
-    notify(db, data['student_id'], 'Новое домашнее задание', text(data['title'], 150), 'homework', 'homework:'+assignment_id)
-    return {'id': assignment_id}
+    lesson = one(db, "SELECT starts_at FROM lessons WHERE student_id=? AND status='scheduled' AND starts_at>? ORDER BY starts_at LIMIT 1", (data['student_id'], now()))
+    if not lesson:
+        raise Problem('Сначала запланируйте следующее занятие с этим учеником.')
+    title = text(data.get('title') or 'Hometask', 150, True)
+    insert(db, 'homework', id=assignment_id, student_id=data['student_id'], title=title, kind='Practice', instructions=text(data.get('instructions'), 15000, True), due_at=lesson['starts_at'], created_at=now())
+    notify(db, data['student_id'], 'Новое домашнее задание', title, 'homework', 'homework:'+assignment_id)
+    return {'id': assignment_id, 'due_at': lesson['starts_at']}
 
 
 def homework_action(db, user, assignment_id, action, data):
@@ -379,6 +368,8 @@ def add_material(db, user, data):
         student_exists(db, student_id)
     material_id=uid()
     insert(db, 'materials', id=material_id, student_id=student_id, title=text(data.get('title'),150,True), body=text(data.get('body',''),15000), url=safe_url(data.get('url','')), created_at=now())
+    recipients=[{'id':student_id}] if student_id else rows(db,"SELECT id FROM users WHERE role='student' AND active=1")
+    for person in recipients:notify(db,person['id'],'Новый материал',data['title'],'materials','material:'+material_id)
     return {'id': material_id}
 
 
@@ -393,6 +384,8 @@ def add_goal(db, user, data):
         except ValueError:
             raise Problem('Некорректный срок цели.')
     insert(db, 'goals', id=goal_id, student_id=student_id, title=text(data.get('title'),150,True), target=integer(data.get('target'),1,10000), unit=text(data.get('unit','шагов'),40), deadline=deadline, created_at=now())
+    if user['role']=='teacher':notify(db,student_id,'Новая цель',data['title'],'progress','goal:'+goal_id)
+    else:notify_teacher(db,'Ученик добавил цель',data['title'],'progress','goal:'+goal_id)
     return {'id':goal_id}
 
 
@@ -400,6 +393,8 @@ def update_goal(db, user, goal_id, data):
     goal=one(db,'SELECT * FROM goals WHERE id=?',(goal_id,),True)
     owns(user,goal['student_id'])
     db.execute('UPDATE goals SET progress=? WHERE id=?',(integer(data.get('progress'),0,goal['target']),goal_id))
+    if user['role']=='teacher':notify(db,goal['student_id'],'Обновлён прогресс цели',goal['title'],'progress','goal-updated:'+goal_id+':'+uid())
+    else:notify_teacher(db,'Ученик обновил цель',goal['title'],'progress','goal-updated:'+goal_id+':'+uid())
     return {'ok':True}
 
 
@@ -410,20 +405,58 @@ def add_progress(db, user, data):
     if skill not in ['Speaking','Listening','Reading','Writing','Grammar','Pronunciation']:
         raise Problem('Неизвестный навык.')
     insert(db,'progress_notes',id=uid(),student_id=data['student_id'],skill=skill,score=integer(data.get('score'),0,100),note=text(data.get('note',''),5000),created_at=now())
+    notify(db,data['student_id'],'Новая оценка навыка',skill,'progress','progress:'+uid())
     return {'ok':True}
 
 
 def send_message(db,user,data):
     student_id=user['id'] if user['role']=='student' else data.get('student_id')
     student_exists(db,student_id)
-    message_id=uid()
+    message_id=data.get('client_id') or uid()
+    if not isinstance(message_id,str) or not re.fullmatch(r'[a-f0-9]{32}',message_id):
+        raise Problem('Некорректный идентификатор сообщения.')
     body=text(data.get('body'),10000,True)
-    insert(db,'messages',id=message_id,student_id=student_id,author_id=user['id'],body=body,created_at=now())
+    existing=one(db,'SELECT * FROM messages WHERE id=?',(message_id,))
+    if existing:
+        if existing['author_id']!=user['id'] or existing['student_id']!=student_id or existing['body']!=body:
+            raise Problem('Это сообщение уже существует.',409)
+        return {'id':message_id,'message':existing}
+    message={'id':message_id,'student_id':student_id,'author_id':user['id'],'body':body,'created_at':now()}
+    insert(db,'messages',**message)
     if user['role']=='teacher':
         notify(db,student_id,'Сообщение преподавателя',body[:200],'messages','message:'+message_id)
     else:
         notify_teacher(db,'Сообщение ученика',user['name']+': '+body[:180],'messages','message:'+message_id)
-    return {'id':message_id}
+    return {'id':message_id,'message':message}
+
+
+def notification_counts(db,user):
+    return {r['route']:r['count'] for r in rows(db,"SELECT route,COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL AND route<>'referrals' GROUP BY route",(user['id'],))}
+
+
+def activity(db,user,conversation=''):
+    result={'notification_counts':notification_counts(db,user),'notifications':rows(db,"SELECT * FROM notifications WHERE user_id=? AND route<>'referrals' ORDER BY created_at DESC LIMIT 100",(user['id'],))}
+    if conversation:
+        owns(user,conversation)
+        student_exists(db,conversation)
+        result['messages']=rows(db,'SELECT * FROM messages WHERE student_id=? ORDER BY created_at,rowid',(conversation,))
+    return result
+
+
+def read_notifications(db,user,data):
+    where,args='user_id=? AND read_at IS NULL',[user['id']]
+    if data.get('route'):
+        if data['route'] not in ('overview','calendar','students','payments','homework','materials','progress','reports','analytics','templates','messages','settings'):
+            raise Problem('Неизвестный раздел.')
+        where+=' AND route=?'
+        args.append(data['route'])
+    if data.get('route')=='messages' and data.get('student_id'):
+        owns(user,data['student_id'])
+        student_exists(db,data['student_id'])
+        where+=" AND event_key IN (SELECT ? || ':message:' || id FROM messages WHERE student_id=?)"
+        args.extend([user['id'],data['student_id']])
+    db.execute('UPDATE notifications SET read_at=? WHERE '+where,(now(),*args))
+    return {'ok':True,'notification_counts':notification_counts(db,user)}
 
 
 def report_data(db,student_id,month):
@@ -544,7 +577,7 @@ def upload(db,user,data):
 def save_settings(db,user,data):
     teacher(user)
     allowed={'studio_name':lambda x:text(x,80,True),'cancel_hours':lambda x:integer(x,0,168),
-             'late_cancel_charge':bool,'referral_enabled':bool,'referral_bonus':lambda x:integer(x,0,10),
+             'late_cancel_charge':bool,
              'sbp_url':safe_url,'reminder_hours':lambda x:integer(x,1,72),'low_balance':lambda x:integer(x,0,10)}
     for key,validator in allowed.items():
         if key in data:

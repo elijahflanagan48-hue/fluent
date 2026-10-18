@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { passwordHash, verifyPassword, equal, integer, safeUrl, placeholders, uid, now, digest, insert, balance } from '../serverless/core.mjs';
+import { passwordHash, verifyPassword, equal, integer, safeUrl, placeholders, uid, now, digest, insert, balance, selectBatch } from '../serverless/core.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
@@ -27,7 +27,7 @@ async function database() {
   if (runtime) {
     const tables=(await admin.query("SELECT tablename FROM pg_tables WHERE schemaname='fluent' AND tablename<>'schema_version'")).rows.map(r=>'fluent.'+r.tablename);
     await admin.query('TRUNCATE '+tables.join(',')+' RESTART IDENTITY CASCADE');
-    return {async query(sql,args=[]) {return (await runtime.query(placeholders(sql),args)).rows;},async begin(){await runtime.query('BEGIN');await runtime.query('SELECT pg_advisory_xact_lock(1937036646)');},async commit(){await runtime.query('COMMIT');},async rollback(){await runtime.query('ROLLBACK');},close(){}};
+    return {async batch(entries){const q=selectBatch(entries),r=(await runtime.query(q.sql,q.args)).rows[0];return entries.map((_,i)=>r['q'+i]);},async query(sql,args=[]) {return (await runtime.query(placeholders(sql),args)).rows;},async begin(){await runtime.query('BEGIN');await runtime.query('SELECT pg_advisory_xact_lock(1937036646)');},async commit(){await runtime.query('COMMIT');},async rollback(){await runtime.query('ROLLBACK');},close(){}};
   }
   const raw=new DatabaseSync(':memory:'); raw.exec(readFileSync('backend/schema.sql','utf8'));
   // Cloud schema has explicit rowid columns; SQLite exposes an implicit rowid.
@@ -49,6 +49,48 @@ async function fixture() {
   return {db,teacher,student,other,request};
 }
 process.env.FLUENT_BASE_URL='https://fluent.example.test';
+test('batched SELECTs retain parameter boundaries and reject writes',()=>{
+  const q=selectBatch([["SELECT '?' AS literal, ? AS value",['one']],['SELECT ? AS value',['two']]]);
+  assert.deepEqual(q.args,['one','two']);assert.ok(q.sql.includes('$1 AS value'));assert.ok(q.sql.includes('$2 AS value'));assert.ok(q.sql.includes("'?' AS literal"));
+  assert.throws(()=>selectBatch([['DELETE FROM users',[]]]));
+  assert.throws(()=>selectBatch([['SELECT 1; DELETE FROM users',[]]]));
+});
+test('homework defaults to Hometask and the next student lesson, following teacher moves',async()=>{
+  const f=await fixture();
+  assert.equal((await f.request('/homework',{student_id:f.student,instructions:'Practice'})).status,400);
+  const start=DateTime.utc().plus({days:9}).startOf('hour');
+  const lesson=await f.request('/lessons',{student_id:f.student,title:'Next',starts_at:start.toISO()});
+  assert.equal(lesson.status,200);
+  const h=await f.request('/homework',{student_id:f.student,instructions:'Practice',kind:'Writing',due_at:'2000-01-01T00:00:00Z'});
+  assert.equal(h.status,200);
+  let task=(await f.request('/bootstrap')).body.homework.find(x=>x.id===h.body.id);
+  assert.equal(task.title,'Hometask');assert.equal(task.kind,'Practice');assert.equal(+new Date(task.due_at),+start);
+  const moved=start.plus({days:1,hours:2});
+  assert.equal((await f.request('/lessons/'+lesson.body.ids[0]+'/reschedule',{starts_at:moved.toISO()})).status,200);
+  task=(await f.request('/bootstrap')).body.homework.find(x=>x.id===h.body.id);
+  assert.equal(+new Date(task.due_at),+moved);
+  assert.equal((await f.request('/homework',{student_id:f.other,instructions:'Practice'})).status,400);
+});
+test('messages are idempotent and notification reads are scoped to recipient and conversation',async()=>{
+  const f=await fixture(),id=uid(),payload={body:'Hello',client_id:id};
+  const first=await f.request('/messages',payload,f.student);
+  assert.equal(first.status,200);assert.equal(first.body.message.body,'Hello');
+  assert.equal((await f.request('/messages',payload,f.student)).body.id,id);
+  assert.equal((await f.db.query('SELECT * FROM messages')).length,1);
+  assert.equal((await f.request('/messages',{...payload,body:'Different'},f.student)).status,409);
+  assert.equal((await f.request('/messages',payload,f.other)).status,409);
+  await f.request('/messages',{body:'Other thread',client_id:uid()},f.other);
+  let a=await f.request('/activity');assert.equal(a.body.notification_counts.messages,2);
+  a=await f.request('/notifications/read',{route:'messages',student_id:f.student});
+  assert.equal(a.body.notification_counts.messages,1);
+  assert.equal((await f.request('/activity?conversation='+f.other,undefined,f.student)).status,403);
+  assert.equal((await f.request('/activity?conversation='+f.student,undefined,f.student)).body.messages.length,1);
+  for(let i=0;i<105;i++)await insert(f.db,'notifications',{id:uid(),user_id:f.student,title:'New',body:'Task',route:'homework',event_key:uid(),created_at:now()});
+  a=await f.request('/activity',undefined,f.student);
+  assert.equal(a.body.notifications.length,100);assert.equal(a.body.notification_counts.homework,105);
+  await f.request('/notifications/read',{route:'homework'},f.student);
+  assert.equal((await f.request('/activity')).body.notification_counts.messages,1,'student reads cannot mark teacher notices');
+});
 test('existing Python PBKDF2 format remains compatible',async()=>{
   const hash=await passwordHash('Existing-password-2026'); assert.match(hash,/^pbkdf2_sha256\$600000\$/);
   assert.equal(await verifyPassword('Existing-password-2026',hash),true); assert.equal(await verifyPassword('wrong',hash),false);
@@ -133,7 +175,8 @@ test('booking consumes overlapping slots and cannot double book',async()=>{
   assert.equal((await f.request('/slots/'+slot.body.id+'/book',{},f.other)).status,404);
 });
 test('homework submission, review, reopen and ownership',async()=>{
-  const f=await fixture(),task=await f.request('/homework',{student_id:f.student,title:'Essay',instructions:'Write it',due_at:'2027-01-01T12:00:00Z'}),id=task.body.id;
+  const f=await fixture();await f.request('/lessons',{student_id:f.student,title:'Next',starts_at:DateTime.utc().plus({days:7}).toISO()});
+  const task=await f.request('/homework',{student_id:f.student,title:'Essay',instructions:'Write it',due_at:'2027-01-01T12:00:00Z'}),id=task.body.id;assert.equal(task.status,200);
   assert.equal((await f.request('/homework/'+id+'/submit',{answer:'x'},f.other)).status,403);
   assert.equal((await f.request('/homework/'+id+'/submit',{answer:''},f.student)).status,400);
   assert.equal((await f.request('/homework/'+id+'/submit',{answer:'My essay'},f.student)).status,200);
@@ -160,7 +203,8 @@ test('owner setup remains closed after first owner exists',async()=>{
   assert.equal((await f.request('/auth/info',undefined,null)).body.setup_enabled,false);
 });
 test('direct file upload checks owner, content and one-use completion',async()=>{
-  const f=await fixture(),task=await f.request('/homework',{student_id:f.student,title:'Files',instructions:'Send',due_at:'2027-01-01T12:00:00Z'});
+  const f=await fixture();await f.request('/lessons',{student_id:f.student,title:'Next',starts_at:DateTime.utc().plus({days:7}).toISO()});
+  const task=await f.request('/homework',{student_id:f.student,title:'Files',instructions:'Send',due_at:'2027-01-01T12:00:00Z'});assert.equal(task.status,200);
   process.env.SUPABASE_URL='https://lvuugfbefimwnskcnvyg.supabase.co'; process.env.SUPABASE_SECRET_KEY='test-only-not-a-real-key';
   const saved=globalThis.fetch,bytes=Buffer.from('%PDF-1.7\nTest'),calls=[];
   globalThis.fetch=async(url,options={})=>{

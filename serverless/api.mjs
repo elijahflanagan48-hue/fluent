@@ -72,6 +72,7 @@ async function apiRoute(db,req,path,data,user) {
   if (method==='GET') {
     if (path==='/api/auth/me') return [{user:publicUser(user),csrf:user.csrf},200,{}];
     if (path==='/api/bootstrap') return [await service.bootstrap(db,user),200,{}];
+    if (path==='/api/activity') return [await service.activity(db,user,new URL(req.url).searchParams.get('conversation')||''),200,{}];
     if (path.startsWith('/api/files/')) {
       const file=await one(db,'SELECT * FROM files WHERE id=?',[path.split('/').pop()],true);
       if (!await service.canReadFile(db,user,file)) throw new Problem('Нет доступа к вложению.',403);
@@ -123,7 +124,7 @@ async function apiRoute(db,req,path,data,user) {
       if (kind==='slots' && action==='book') return [await service.bookSlot(db,user,id),200,{}];
       if (kind==='slots' && action==='delete') { teacher(user); await rows(db,'DELETE FROM slots WHERE id=?',[id]); return [{ok:true},200,{}]; }
     }
-    if (path==='/api/notifications/read') { await rows(db,'UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL',[now(),user.id]); return [{ok:true},200,{}]; }
+    if (path==='/api/notifications/read') return [await service.readNotifications(db,user,data),200,{}];
     if (path==='/api/integrations/google/connect') return [{url:integrations.googleAuthUrl(await makeToken(db,user.id,'google',600))},200,{}];
     if (path==='/api/integrations/google/disconnect') {
       await rows(db,"DELETE FROM integrations WHERE user_id=? AND provider='google'",[user.id]); await rows(db,'DELETE FROM calendar_events WHERE user_id=?',[user.id]); await rows(db,'DELETE FROM sync_state WHERE provider=?',['google:'+user.id]); return [{ok:true},200,{}];

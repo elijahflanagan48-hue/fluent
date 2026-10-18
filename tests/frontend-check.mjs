@@ -77,3 +77,4 @@ for(const route of vm.runInContext('allowedRoutes()',context)){
 }
 console.log('Frontend: all teacher/student routes, escaping and empty states passed.');
 await import('./calendar-drag-check.mjs');
+await import('./interaction-check.mjs');

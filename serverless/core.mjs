@@ -80,22 +80,33 @@ export async function connect() {
     // pg's connection string TLS parameters must not override certificate verification.
     for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']) parsed.searchParams.delete(key);
     const ca = readFileSync(join(process.cwd(), 'backend/certs/supabase-ca.crt'), 'utf8');
-    pool = new pg.Pool({ connectionString: parsed.toString(), max: 2, idleTimeoutMillis: 5000,
+    pool = new pg.Pool({ connectionString: parsed.toString(), max: 2, idleTimeoutMillis: 60000,
       connectionTimeoutMillis: 15000, allowExitOnIdle: true,
       ssl: local ? false : { rejectUnauthorized: true, ca } });
     pool.on('error', () => {}); // Never log database URLs or provider error objects.
   }
   const client = await pool.connect();
-  await client.query('SET search_path TO fluent, pg_catalog');
-  await client.query("SET statement_timeout = '25s'");
-  await client.query("SET lock_timeout = '12s'");
   return {
+    dialect:'postgres',
     async query(sql, args = []) { return (await client.query(placeholders(sql), args)).rows; },
-    async begin(write = true) { await client.query('BEGIN'); if (write) await client.query('SELECT pg_advisory_xact_lock(1937036646)'); },
+    async batch(entries) { const q=selectBatch(entries);const result=(await client.query(q.sql,q.args)).rows[0];return entries.map((_,i)=>result['q'+i]); },
+    async begin(write = true) { await client.query("BEGIN; SET LOCAL search_path TO fluent, pg_catalog; SET LOCAL statement_timeout = '25s'; SET LOCAL lock_timeout = '12s';"+(write?' SELECT pg_advisory_xact_lock(1937036646);':'')); },
     async commit() { await client.query('COMMIT'); }, async rollback() { await client.query('ROLLBACK'); },
     close() { client.release(); }
   };
 }
+// Combine independent parameterized SELECTs into one network round trip.
+// No session data or query results are cached between users.
+export function selectBatch(entries){
+  const args=[];
+  const parts=entries.map(([sql,values=[]],i)=>{
+    if(!/^SELECT\s/i.test(sql)||sql.includes(';'))throw Error('Batch accepts internal SELECTs only');
+    const offset=args.length,prepared=placeholders(sql).split(/('(?:''|[^'])*'|"(?:""|[^"])*")/).map((part,n)=>n%2?part:part.replace(/\$(\d+)/g,(_,index)=>'$'+(+index+offset))).join('');args.push(...values);
+    return `COALESCE((SELECT jsonb_agg(row_to_json(q)) FROM (${prepared}) q),'[]'::jsonb) AS q${i}`;
+  });
+  return {sql:'SELECT '+parts.join(','),args};
+}
+export async function readBatch(db,entries){return db.batch?db.batch(entries):Promise.all(entries.map(([sql,args])=>db.query(sql,args||[])));}
 export const rows = (db, sql, args = []) => db.query(sql, args);
 export async function one(db, sql, args = [], required = false) {
   const value = (await rows(db, sql, args))[0] || null;
@@ -116,17 +127,17 @@ export const studentExists = (db, id) => one(db, "SELECT id,name,email FROM user
 export const balance = (db, id) => scalar(db, 'SELECT COALESCE(SUM(delta),0) AS value FROM ledger WHERE student_id=?', [id]);
 export const audit = (db, user, action, entity) => insert(db, 'audit', { id: uid(), actor_id: user?.id || null, action, entity_id: entity, created_at: now() });
 export const publicUser = user => Object.fromEntries(['id', 'email', 'name', 'role', 'timezone', 'telegram_enabled', 'email_enabled'].map(k => [k, user[k]]));
-export async function notify(db, id, title, body, route, eventKey) {
+export async function notify(db, id, title, body, route, eventKey, recipient=null) {
   const key = id + ':' + eventKey;
-  if (await one(db, 'SELECT id FROM notifications WHERE event_key=?', [key])) return;
-  await insert(db, 'notifications', { id: uid(), user_id: id, title, body, route, event_key: key, created_at: now() });
-  const user = await one(db, 'SELECT * FROM users WHERE id=?', [id], true);
+  const created=await rows(db,'INSERT INTO notifications(id,user_id,title,body,route,event_key,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING RETURNING id',[uid(),id,title,body,route,key,now()]);
+  if(!created.length)return;
+  const user = recipient||await one(db, 'SELECT * FROM users WHERE id=?', [id], true);
   for (const [channel, enabled] of [['telegram', user.telegram_enabled && user.telegram_chat], ['email', user.email_enabled]]) {
     if (enabled) await insert(db, 'outbox', { id: uid(), user_id: id, channel, subject: title, body, event_key: key + ':' + channel });
   }
 }
 export async function notifyTeacher(db, title, body, route, key) {
-  for (const user of await rows(db, "SELECT id FROM users WHERE role='teacher' AND active=1")) await notify(db, user.id, title, body, route, key);
+  for (const user of await rows(db, "SELECT * FROM users WHERE role='teacher' AND active=1")) await notify(db, user.id, title, body, route, key,user);
 }
 export async function makeToken(db, id, kind, duration = 86400) {
   const raw = randomBytes(32).toString('base64url');

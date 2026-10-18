@@ -84,6 +84,10 @@ class StudioTest(unittest.TestCase):
         return self.assert_ok(self.t.post('/api/lessons',{'student_id':student or self.student_id,'title':'Speaking','starts_at':future(hours),'duration':50}))['ids'][0]
 
     def homework(self,student=None):
+        student=student or self.student_id
+        with connect() as db:
+            upcoming=one(db,"SELECT id FROM lessons WHERE student_id=? AND status='scheduled' AND starts_at>?",(student,now()))
+        if not upcoming:self.lesson(1000,student)
         return self.assert_ok(self.t.post('/api/homework',{'student_id':student or self.student_id,'title':'Story','instructions':'Tell a story','due_at':future(48)}))['id']
 
     def test_login_logout_and_secure_password(self):
@@ -158,13 +162,13 @@ class StudioTest(unittest.TestCase):
         self.assertNotEqual(self.payment(),pid)
         self.assertEqual(self.t.post('/api/payments/'+pid+'/confirm',{})[0],409)
 
-    def test_referral_bonus_only_on_first_paid_package(self):
+    def test_removed_referral_program_never_adds_new_bonuses(self):
         with connect() as db:
             db.execute('UPDATE students SET referrer_id=? WHERE user_id=?',(self.other_id,self.student_id))
-        self.assert_ok(self.t.post('/api/settings',{'referral_enabled':True,'referral_bonus':1}))
+            db.execute("UPDATE settings SET value='true' WHERE key='referral_enabled'")
         for _ in range(2):
             pid=self.payment();self.assert_ok(self.t.post('/api/payments/'+pid+'/confirm',{}))
-        with connect() as db:self.assertEqual(balance(db,self.other_id),1);self.assertEqual(balance(db,self.student_id),16)
+        with connect() as db:self.assertEqual(balance(db,self.other_id),0);self.assertEqual(balance(db,self.student_id),16)
 
     def test_overlap_and_repeat_are_atomic(self):
         at=future(100);self.assert_ok(self.t.post('/api/lessons',{'student_id':self.student_id,'title':'First','starts_at':at,'duration':50}))

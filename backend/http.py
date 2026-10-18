@@ -169,6 +169,8 @@ def api_route(db,env,path,method,data,user):
         return {'user':public_user(user),'csrf':user['csrf']},200,[]
     if path=='/api/bootstrap' and method=='GET':
         return service.bootstrap(db,user),200,[]
+    if path=='/api/activity' and method=='GET':
+        return service.activity(db,user,parse_qs(env.get('QUERY_STRING','')).get('conversation',[''])[0]),200,[]
     if path=='/api/auth/logout' and method=='POST':
         db.execute('DELETE FROM sessions WHERE token_hash=?',(user['token_hash'],))
         return {'ok':True},200,[('Set-Cookie','fluent_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')]
@@ -280,8 +282,7 @@ def api_route(db,env,path,method,data,user):
                 db.execute('DELETE FROM slots WHERE id=?',(item_id,))
                 return {'ok':True},200,[]
         if path=='/api/notifications/read':
-            db.execute('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL',(now(),user['id']))
-            return {'ok':True},200,[]
+            return service.read_notifications(db,user,data),200,[]
     raise Problem('Неизвестный адрес.',404)
 
 

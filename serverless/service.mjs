@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { randomBytes } from 'node:crypto';
-import { Problem, text, integer, email, safeUrl, zone, uid, now, dt, iso, rows, one, insert, settings, teacher, owns, studentExists, balance, scalar, audit, notify, notifyTeacher, makeToken, tokenRecord, rateLimit, digest, baseUrl, publicUser } from './core.mjs';
+import { Problem, text, integer, email, safeUrl, zone, uid, now, dt, iso, rows, one, insert, settings, teacher, owns, studentExists, balance, scalar, audit, notify, notifyTeacher, makeToken, tokenRecord, rateLimit, digest, baseUrl, publicUser, readBatch } from './core.mjs';
 import * as integrations from './integrations.mjs';
 import * as storage from './storage.mjs';
 
@@ -11,37 +11,39 @@ export async function canReadFile(db, user, file) {
   return (file.entity_type === 'material' && file.student_id === null) || file.student_id === user.id;
 }
 export async function bootstrap(db, user) {
-  const [clause, args] = scoped(user), cfg = await settings(db);
-  const people = await rows(db, 'SELECT u.id,u.name,u.email,u.timezone,u.active,s.level,s.focus,s.private_notes,s.referral_code,s.referrer_id FROM users u JOIN students s ON s.user_id=u.id WHERE ' + (user.role === 'teacher' ? '1=1' : 'u.id=?') + ' ORDER BY u.name', args);
-  for (const person of people) { person.balance = await balance(db, person.id); if (user.role !== 'teacher') { delete person.private_notes; delete person.referrer_id; } }
-  const result = { hosting: { free: true, serverless: true }, user: publicUser(user), settings: cfg, students: people };
-  result.teachers = await rows(db, "SELECT id,name FROM users WHERE role='teacher'");
-  for (const [key, table, order] of [['lessons', 'lessons', 'starts_at'], ['payments', 'payments', 'created_at DESC'], ['ledger', 'ledger', 'created_at DESC'], ['homework', 'homework', 'due_at'], ['goals', 'goals', 'created_at DESC'], ['progress', 'progress_notes', 'created_at'], ['messages', 'messages', 'created_at']]) result[key] = await rows(db, `SELECT * FROM ${table} WHERE ${clause} ORDER BY ${order}`, args);
-  for (const payment of result.payments) for (const key of ['request_key', 'provider_id', 'qr_svg', 'error']) delete payment[key];
-  result.slots = await rows(db, 'SELECT * FROM slots WHERE starts_at>? ORDER BY starts_at', [now()]);
-  result.packages = await rows(db, 'SELECT * FROM packages ' + (user.role === 'teacher' ? '' : 'WHERE active=1') + ' ORDER BY lessons');
-  result.materials = await rows(db, `SELECT * FROM materials WHERE ${clause} OR student_id IS NULL ORDER BY created_at DESC`, args);
-  result.reports = await rows(db, `SELECT * FROM reports WHERE ${clause}` + (user.role === 'teacher' ? '' : ' AND published_at IS NOT NULL') + ' ORDER BY month DESC', args);
-  result.notifications = await rows(db, 'SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100', [user.id]);
-  result.integrations = await integrations.status(db, user);
-  result.templates = user.role === 'teacher' ? await rows(db, 'SELECT * FROM templates ORDER BY title') : [];
-  result.referrals = user.role === 'teacher' ? await rows(db, 'SELECT u.id,u.name,s.referrer_id,s.referral_rewarded FROM students s JOIN users u ON u.id=s.user_id WHERE s.referrer_id IS NOT NULL') : await rows(db, 'SELECT referral_rewarded FROM students WHERE referrer_id=?', [user.id]);
-  result.files = [];
-  for (const file of await rows(db, 'SELECT * FROM files')) if (await canReadFile(db, user, file)) result.files.push(file);
-  if (user.role === 'teacher') result.deliveries = await rows(db, 'SELECT channel,state,COUNT(*) AS count FROM outbox GROUP BY channel,state');
+  const [clause,args]=scoped(user),entries=[
+    ['settings','SELECT * FROM settings',[]],
+    ['students','SELECT u.id,u.name,u.email,u.timezone,u.active,s.level,s.focus,s.private_notes,COALESCE((SELECT SUM(delta) FROM ledger WHERE student_id=u.id),0) AS balance FROM users u JOIN students s ON s.user_id=u.id WHERE '+(user.role==='teacher'?'1=1':'u.id=?')+' ORDER BY u.name',args],
+    ['teachers',"SELECT id,name FROM users WHERE role='teacher'",[]],
+    ...[['lessons','lessons','starts_at'],['payments','payments','created_at DESC'],['ledger','ledger','created_at DESC'],['homework','homework','due_at'],['goals','goals','created_at DESC'],['progress','progress_notes','created_at'],['messages','messages','created_at,rowid']].map(([key,table,order])=>[key,'SELECT * FROM '+table+' WHERE '+clause+' ORDER BY '+order,args]),
+    ['slots','SELECT * FROM slots WHERE starts_at>? ORDER BY starts_at',[now()]],
+    ['packages','SELECT * FROM packages '+(user.role==='teacher'?'':'WHERE active=1')+' ORDER BY lessons',[]],
+    ['materials','SELECT * FROM materials WHERE '+clause+' OR student_id IS NULL ORDER BY created_at DESC',args],
+    ['reports','SELECT * FROM reports WHERE '+clause+(user.role==='teacher'?'':' AND published_at IS NOT NULL')+' ORDER BY month DESC',args],
+    ['notifications',"SELECT * FROM notifications WHERE user_id=? AND route<>'referrals' ORDER BY created_at DESC LIMIT 100",[user.id]],
+    ['notificationCounts',"SELECT route,COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL AND route<>'referrals' GROUP BY route",[user.id]],
+    ['google',"SELECT user_id FROM integrations WHERE user_id=? AND provider='google'",[user.id]],
+    ['templates',user.role==='teacher'?'SELECT * FROM templates ORDER BY title':'SELECT * FROM templates WHERE 1=0',[]],
+    ['files',user.role==='teacher'?'SELECT * FROM files':"SELECT * FROM files WHERE owner_id=? OR student_id=? OR (entity_type='material' AND student_id IS NULL) OR entity_type='sbp_qr'",user.role==='teacher'?[]:[user.id,user.id]],
+    ['deliveries',user.role==='teacher'?'SELECT channel,state,COUNT(*) AS count FROM outbox GROUP BY channel,state':'SELECT channel,state FROM outbox WHERE 1=0',[]]
+  ];
+  const values=await readBatch(db,entries.map(([,sql,params])=>[sql,params]));
+  const result=Object.fromEntries(entries.map(([key],i)=>[key,values[i]]));
+  const cfg=Object.fromEntries(result.settings.map(r=>[r.key,JSON.parse(r.value)]));
+  cfg.referral_enabled=false;cfg.referral_bonus=0;result.settings=cfg;
+  result.hosting={free:true,serverless:true};result.user=publicUser(user);result.referrals=[];
+  result.notification_counts=Object.fromEntries(result.notificationCounts.map(r=>[r.route,Number(r.count)]));delete result.notificationCounts;
+  for(const person of result.students)if(user.role!=='teacher')delete person.private_notes;
+  for(const payment of result.payments)for(const key of ['request_key','provider_id','qr_svg','error'])delete payment[key];
+  result.files=result.files.filter(f=>user.role==='teacher'||f.owner_id===user.id||(f.entity_type==='sbp_qr'&&cfg.sbp_qr_file_id===f.id)||(f.entity_type==='material'&&f.student_id===null)||f.student_id===user.id);
+  result.integrations=await integrations.status(db,user,Boolean(result.google.length));delete result.google;
   return result;
 }
 export async function addStudent(db, user, data) {
   teacher(user);
   const addr = email(data.email), name = text(data.name, 100, true);
   if (await one(db, 'SELECT id FROM users WHERE email=?', [addr])) throw new Problem('Ученик с таким email уже существует.', 409);
-  let referrer = null;
-  if (data.referral_code) {
-    if (!(await settings(db)).referral_enabled) throw new Problem('Реферальная программа выключена.');
-    const match = await one(db, 'SELECT user_id FROM students WHERE referral_code=?', [text(data.referral_code, 30).toUpperCase()]);
-    if (!match) throw new Problem('Реферальный код не найден.');
-    referrer = match.user_id;
-  }
+  const referrer = null;
   const id = uid();
   await insert(db, 'users', { id, email: addr, name, role: 'student', timezone: zone(data.timezone ?? 'Europe/Moscow'), created_at: now() });
   await insert(db, 'students', { user_id: id, level: text(data.level ?? 'B1', 20), focus: text(data.focus ?? '', 1000), private_notes: text(data.private_notes ?? '', 5000), referral_code: randomBytes(4).toString('hex').toUpperCase(), referrer_id: referrer });
@@ -137,6 +139,7 @@ export async function lessonAction(db, user, id, action, data) {
       if (+dt(start) <= Date.now()) throw new Problem('Выберите время в будущем.');
       await noConflict(db, start, duration, id);
       await rows(db, 'UPDATE lessons SET starts_at=?,duration=?,updated_at=? WHERE id=?', [start, duration, now(), id]);
+      await rows(db,"UPDATE homework SET due_at=? WHERE student_id=? AND status='assigned' AND due_at=?",[start,lesson.student_id,lesson.starts_at]);
       await consumeSlots(db, start, duration);
     }
   } else throw new Problem('Неизвестное действие.', 404);
@@ -165,7 +168,7 @@ export async function paymentAction(db, user, id, action, data) {
     if (payment.status === 'claimed') return { ok: true };
     if (payment.status !== 'pending') throw new Problem('Оплата уже обработана.', 409);
     await rows(db, "UPDATE payments SET status='claimed' WHERE id=?", [id]);
-    await notifyTeacher(db, 'Ученик отметил оплату', 'Проверьте поступление ' + Math.floor(payment.amount / 100) + ' ₽ в Т-Банке.', 'payments', 'claimed:' + id); return { ok: true };
+    await notifyTeacher(db, 'Ученик отметил оплату', 'Проверьте поступление ' + Math.floor(payment.amount / 100) + ' ₽ в банке.', 'payments', 'claimed:' + id); return { ok: true };
   }
   teacher(user);
   if (action === 'confirm') {
@@ -173,15 +176,6 @@ export async function paymentAction(db, user, id, action, data) {
     if (!['pending', 'claimed'].includes(payment.status)) throw new Problem('Этот платёж нельзя подтвердить.', 409);
     await rows(db, "UPDATE payments SET status='paid',paid_at=?,reference=? WHERE id=?", [now(), text(data.reference ?? '', 100), id]);
     await insert(db, 'ledger', { id: uid(), student_id: payment.student_id, delta: payment.lessons, reason: 'Оплата пакета занятий', source: 'payment:' + id, created_at: now() });
-    const student = await one(db, 'SELECT * FROM students WHERE user_id=?', [payment.student_id], true), cfg = await settings(db);
-    const count = await scalar(db, "SELECT COUNT(*) FROM payments WHERE student_id=? AND status='paid'", [payment.student_id]);
-    if (count === 1 && cfg.referral_enabled && student.referrer_id && !student.referral_rewarded) {
-      if (cfg.referral_bonus) {
-        await insert(db, 'ledger', { id: uid(), student_id: student.referrer_id, delta: cfg.referral_bonus, reason: 'Бонус за приглашённого ученика', source: 'referral:' + id, created_at: now() });
-        await notify(db, student.referrer_id, 'Бонус за рекомендацию', 'На баланс начислены бонусные занятия: ' + cfg.referral_bonus, 'referrals', 'referral:' + payment.student_id);
-      }
-      await rows(db, 'UPDATE students SET referral_rewarded=1 WHERE user_id=?', [payment.student_id]);
-    }
     await notify(db, payment.student_id, 'Оплата подтверждена', 'Зачислено занятий: ' + payment.lessons, 'payments', 'paid:' + id);
     await audit(db, user, 'payment.confirmed', id);
   } else if (action === 'reject') {
@@ -206,8 +200,11 @@ export async function paymentAction(db, user, id, action, data) {
 }
 export async function createHomework(db, user, data) {
   teacher(user); await studentExists(db, data.student_id); const id = uid();
-  await insert(db, 'homework', { id, student_id: data.student_id, title: text(data.title, 150, true), kind: text(data.kind ?? 'Practice', 40), instructions: text(data.instructions, 15000, true), due_at: iso(data.due_at), created_at: now() });
-  await notify(db, data.student_id, 'Новое домашнее задание', data.title, 'homework', 'homework:' + id); return { id };
+  const lesson=await one(db,"SELECT starts_at FROM lessons WHERE student_id=? AND status='scheduled' AND starts_at>? ORDER BY starts_at LIMIT 1",[data.student_id,now()]);
+  if(!lesson)throw new Problem('Сначала запланируйте следующее занятие с этим учеником.');
+  const title=text(data.title||'Hometask',150,true);
+  await insert(db, 'homework', { id, student_id: data.student_id, title, kind:'Practice', instructions: text(data.instructions, 15000, true), due_at: lesson.starts_at, created_at: now() });
+  await notify(db, data.student_id, 'Новое домашнее задание', title, 'homework', 'homework:' + id); return { id, due_at:lesson.starts_at };
 }
 export async function homeworkAction(db, user, id, action, data) {
   const task = await one(db, 'SELECT * FROM homework WHERE id=?', [id], true); owns(user, task.student_id);
@@ -235,29 +232,65 @@ export async function addTemplate(db, user, data, id = null) {
 }
 export async function addMaterial(db, user, data) {
   teacher(user); const student = data.student_id || null, id = uid(); if (student) await studentExists(db, student);
-  await insert(db, 'materials', { id, student_id: student, title: text(data.title, 150, true), body: text(data.body ?? '', 15000), url: safeUrl(data.url ?? ''), created_at: now() }); return { id };
+  await insert(db, 'materials', { id, student_id: student, title: text(data.title, 150, true), body: text(data.body ?? '', 15000), url: safeUrl(data.url ?? ''), created_at: now() });
+  const recipients=student?[{id:student}]:await rows(db,"SELECT id FROM users WHERE role='student' AND active=1");
+  for(const person of recipients)await notify(db,person.id,'Новый материал',data.title,'materials','material:'+id);
+  return { id };
 }
 export async function addGoal(db, user, data) {
   const student = user.role === 'student' ? user.id : data.student_id; await studentExists(db, student);
   const deadline = text(data.deadline ?? '', 10), id = uid();
   if (deadline && (!/^\d{4}-\d\d-\d\d$/.test(deadline) || !DateTime.fromISO(deadline).isValid)) throw new Problem('Некорректный срок цели.');
-  await insert(db, 'goals', { id, student_id: student, title: text(data.title, 150, true), target: integer(data.target, 1, 10000), unit: text(data.unit ?? 'шагов', 40), deadline, created_at: now() }); return { id };
+  await insert(db, 'goals', { id, student_id: student, title: text(data.title, 150, true), target: integer(data.target, 1, 10000), unit: text(data.unit ?? 'шагов', 40), deadline, created_at: now() });
+  if(user.role==='teacher')await notify(db,student,'Новая цель',data.title,'progress','goal:'+id);
+  else await notifyTeacher(db,'Ученик добавил цель',data.title,'progress','goal:'+id);
+  return { id };
 }
 export async function updateGoal(db, user, id, data) {
   const goal = await one(db, 'SELECT * FROM goals WHERE id=?', [id], true); owns(user, goal.student_id);
-  await rows(db, 'UPDATE goals SET progress=? WHERE id=?', [integer(data.progress, 0, goal.target), id]); return { ok: true };
+  await rows(db, 'UPDATE goals SET progress=? WHERE id=?', [integer(data.progress, 0, goal.target), id]);
+  if(user.role==='teacher')await notify(db,goal.student_id,'Обновлён прогресс цели',goal.title,'progress','goal-updated:'+id+':'+uid());
+  else await notifyTeacher(db,'Ученик обновил цель',goal.title,'progress','goal-updated:'+id+':'+uid());
+  return { ok: true };
 }
 export async function addProgress(db, user, data) {
   teacher(user); await studentExists(db, data.student_id); const skill = text(data.skill, 40, true);
   if (!['Speaking', 'Listening', 'Reading', 'Writing', 'Grammar', 'Pronunciation'].includes(skill)) throw new Problem('Неизвестный навык.');
-  await insert(db, 'progress_notes', { id: uid(), student_id: data.student_id, skill, score: integer(data.score, 0, 100), note: text(data.note ?? '', 5000), created_at: now() }); return { ok: true };
+  const id=uid();await insert(db, 'progress_notes', { id, student_id: data.student_id, skill, score: integer(data.score, 0, 100), note: text(data.note ?? '', 5000), created_at: now() });
+  await notify(db,data.student_id,'Новая оценка навыка',skill,'progress','progress:'+id);return { ok: true };
 }
 export async function sendMessage(db, user, data) {
   const student = user.role === 'student' ? user.id : data.student_id; await studentExists(db, student);
-  const id = uid(), body = text(data.body, 10000, true);
-  await insert(db, 'messages', { id, student_id: student, author_id: user.id, body, created_at: now() });
+  const id=data.client_id||uid(),body=text(data.body,10000,true);
+  if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw new Problem('Некорректный идентификатор сообщения.');
+  const existing=await one(db,'SELECT * FROM messages WHERE id=?',[id]);
+  if(existing){if(existing.author_id!==user.id||existing.student_id!==student||existing.body!==body)throw new Problem('Это сообщение уже существует.',409);return {id,message:existing};}
+  const message={id,student_id:student,author_id:user.id,body,created_at:now()};
+  await insert(db, 'messages', message);
   if (user.role === 'teacher') await notify(db, student, 'Сообщение преподавателя', body.slice(0, 200), 'messages', 'message:' + id);
-  else await notifyTeacher(db, 'Сообщение ученика', user.name + ': ' + body.slice(0, 180), 'messages', 'message:' + id); return { id };
+  else await notifyTeacher(db, 'Сообщение ученика', user.name + ': ' + body.slice(0, 180), 'messages', 'message:' + id); return { id,message };
+}
+const notificationRoutes=['overview','calendar','students','payments','homework','materials','progress','reports','analytics','templates','messages','settings'];
+export async function activity(db,user,conversation=''){
+  if(conversation){owns(user,conversation);await studentExists(db,conversation);}
+  const queries=[
+    ["SELECT route,COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL AND route<>'referrals' GROUP BY route",[user.id]],
+    ["SELECT * FROM notifications WHERE user_id=? AND route<>'referrals' ORDER BY created_at DESC LIMIT 100",[user.id]]
+  ];
+  if(conversation)queries.push(['SELECT * FROM messages WHERE student_id=? ORDER BY created_at,rowid',[conversation]]);
+  const result=await readBatch(db,queries);
+  return {notification_counts:Object.fromEntries(result[0].map(r=>[r.route,Number(r.count)])),notifications:result[1],...(conversation?{messages:result[2]}:{})};
+}
+export async function readNotifications(db,user,data){
+  let where='user_id=? AND read_at IS NULL',args=[user.id];
+  if(data.route){if(!notificationRoutes.includes(data.route))throw new Problem('Неизвестный раздел.');where+=' AND route=?';args.push(data.route);}
+  if(data.route==='messages'&&data.student_id){
+    owns(user,data.student_id);await studentExists(db,data.student_id);
+    where+=" AND event_key IN (SELECT ? || ':message:' || id FROM messages WHERE student_id=?)";args.push(user.id,data.student_id);
+  }
+  await rows(db,'UPDATE notifications SET read_at=? WHERE '+where,[now(),...args]);
+  const counts=await rows(db,"SELECT route,COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL AND route<>'referrals' GROUP BY route",[user.id]);
+  return {ok:true,notification_counts:Object.fromEntries(counts.map(r=>[r.route,Number(r.count)]))};
 }
 export async function reportData(db, studentId, month) {
   const student = await one(db, 'SELECT * FROM users WHERE id=?', [studentId], true);
@@ -284,7 +317,7 @@ export async function publishReport(db, user, id, data) {
   await notify(db, report.student_id, 'Ваш отчёт за месяц готов', report.month, 'reports', 'report:' + id); return { ok: true };
 }
 export async function saveSettings(db, user, data) {
-  teacher(user); const allowed = { studio_name: v => text(v, 80, true), cancel_hours: v => integer(v, 0, 168), late_cancel_charge: Boolean, referral_enabled: Boolean, referral_bonus: v => integer(v, 0, 10), sbp_url: safeUrl, reminder_hours: v => integer(v, 1, 72), low_balance: v => integer(v, 0, 10) };
+  teacher(user); const allowed = { studio_name: v => text(v, 80, true), cancel_hours: v => integer(v, 0, 168), late_cancel_charge: Boolean, sbp_url: safeUrl, reminder_hours: v => integer(v, 1, 72), low_balance: v => integer(v, 0, 10) };
   for (const [key, validate] of Object.entries(allowed)) if (key in data) await rows(db, 'UPDATE settings SET value=? WHERE key=?', [JSON.stringify(validate(data[key])), key]);
   await audit(db, user, 'settings.updated', 'studio'); return { ok: true };
 }

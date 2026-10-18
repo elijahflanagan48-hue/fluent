@@ -11,8 +11,8 @@ export async function requestJson(url, data = null, headers = {}, method = null,
     return body ? JSON.parse(body) : {};
   } catch { throw new Problem('Внешний сервис временно недоступен. Повторите позже.',502); }
 }
-export async function status(db,user) {
-  return {zoom:configured('ZOOM_ACCOUNT_ID','ZOOM_CLIENT_ID','ZOOM_CLIENT_SECRET'),google:configured('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'),google_connected:Boolean(await one(db,"SELECT user_id FROM integrations WHERE user_id=? AND provider='google'",[user.id])),telegram:configured('TELEGRAM_BOT_TOKEN','TELEGRAM_BOT_USERNAME','TELEGRAM_WEBHOOK_SECRET'),telegram_connected:Boolean(user.telegram_chat),email:configured('SMTP_HOST','SMTP_FROM')};
+export async function status(db,user,googleConnected) {
+  return {zoom:configured('ZOOM_ACCOUNT_ID','ZOOM_CLIENT_ID','ZOOM_CLIENT_SECRET'),google:configured('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'),google_connected:googleConnected??Boolean(await one(db,"SELECT user_id FROM integrations WHERE user_id=? AND provider='google'",[user.id])),telegram:configured('TELEGRAM_BOT_TOKEN','TELEGRAM_BOT_USERNAME','TELEGRAM_WEBHOOK_SECRET'),telegram_connected:Boolean(user.telegram_chat),email:configured('SMTP_HOST','SMTP_FROM')};
 }
 export async function zoomMeeting(lesson,cancel=false) {
   if (!configured('ZOOM_ACCOUNT_ID','ZOOM_CLIENT_ID','ZOOM_CLIENT_SECRET')) throw new Problem('Zoom ещё не подключён. Можно вставить готовую ссылку на встречу.',503);
