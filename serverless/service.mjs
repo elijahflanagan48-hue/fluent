@@ -265,7 +265,7 @@ export async function sendMessage(db, user, data) {
   if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw new Problem('Некорректный идентификатор сообщения.');
   const existing=await one(db,'SELECT * FROM messages WHERE id=?',[id]);
   if(existing){if(existing.author_id!==user.id||existing.student_id!==student||existing.body!==body)throw new Problem('Это сообщение уже существует.',409);return {id,message:existing};}
-  const message={id,student_id:student,author_id:user.id,body,created_at:now()};
+  const message={id,student_id:student,author_id:user.id,body,created_at:new Date().toISOString()};
   await insert(db, 'messages', message);
   if (user.role === 'teacher') await notify(db, student, 'Сообщение преподавателя', body.slice(0, 200), 'messages', 'message:' + id);
   else await notifyTeacher(db, 'Сообщение ученика', user.name + ': ' + body.slice(0, 180), 'messages', 'message:' + id); return { id,message };

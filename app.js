@@ -259,7 +259,7 @@ function renderChatBody(force=false){
   const box=$('.chat-body');if(!box||!S.data||S.route!=='messages')return;
   const studentId=teacher()?S.conversation:S.user.id,confirmed=S.data.messages.filter(m=>m.student_id===studentId),known=new Set(confirmed.map(m=>m.id));
   const pending=(S.pendingMessages||[]).filter(m=>m.student_id===studentId&&!known.has(m.id));
-  const messages=[...confirmed,...pending],signature=messages.map(m=>m.id+':'+(m.delivery||'sent')).join('|');
+  const messages=[...confirmed,...pending].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)),signature=messages.map(m=>m.id+':'+(m.delivery||'sent')).join('|');
   if(!force&&box.dataset.signature===signature)return;
   const bottom=force||box.scrollHeight-box.clientHeight-box.scrollTop<80,scroll=box.scrollTop;
   box.innerHTML=messages.map(m=>`<div class="bubble ${m.author_id===S.user.id?'mine':''} ${m.delivery||''}">${esc(m.body)}<small>${m.delivery==='sending'?'Отправляется…':m.delivery==='failed'?'Не отправлено':fmt(m.created_at)+' · '+timeLabel(m.created_at)}</small>${m.delivery==='failed'?`<button class="message-retry" data-action="message-retry" data-id="${m.id}">Повторить отправку</button>`:''}</div>`).join('')||empty('Начните разговор здесь.');

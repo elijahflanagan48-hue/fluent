@@ -421,7 +421,7 @@ def send_message(db,user,data):
         if existing['author_id']!=user['id'] or existing['student_id']!=student_id or existing['body']!=body:
             raise Problem('Это сообщение уже существует.',409)
         return {'id':message_id,'message':existing}
-    message={'id':message_id,'student_id':student_id,'author_id':user['id'],'body':body,'created_at':now()}
+    message={'id':message_id,'student_id':student_id,'author_id':user['id'],'body':body,'created_at':datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')}
     insert(db,'messages',**message)
     if user['role']=='teacher':
         notify(db,student_id,'Сообщение преподавателя',body[:200],'messages','message:'+message_id)
