@@ -23,6 +23,11 @@ const fixture={
 };
 context.fixture=fixture;
 vm.runInContext('S.user=fixture.user;S.data=fixture;S.conversation="student";',context);
+const teacherNavigation=vm.runInContext('renderNavigation(2)',context);
+assert.equal((teacherNavigation.match(/class="nav-group"/g)||[]).length,3,'teacher navigation is grouped');
+for(const route of vm.runInContext('allowedRoutes()',context)){
+  assert.equal((teacherNavigation.match(new RegExp(`data-route="${route}"`,'g'))||[]).length,1,route+' appears once in navigation');
+}
 for(const route of vm.runInContext('allowedRoutes()',context)){
   const html=vm.runInContext(`S.route=${JSON.stringify(route)};renderPage()`,context);
   assert.ok(html.includes('<h1>'),route+' has a heading');

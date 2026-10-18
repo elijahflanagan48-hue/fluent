@@ -53,11 +53,24 @@ function navigate(route){if(location.hash==='#'+route){S.route=route;draw();}els
 async function refresh(redraw=true){S.data=await api('/bootstrap');S.user=S.data.user;if(!S.conversation)S.conversation=S.data.students[0]?.id||'';if(redraw)draw();}
 const routeInfo={overview:['Обзор','home'],calendar:['Календарь','calendar'],students:['Ученики','people'],payments:['Оплаты','wallet'],homework:['Домашние задания','work'],materials:['Материалы','book'],progress:['Цели и прогресс','target'],reports:['Отчёты','file'],analytics:['Аналитика','chart'],templates:['Шаблоны заданий','file'],messages:['Сообщения','chat'],referrals:['Рекомендации','gift'],settings:['Настройки','settings']};
 function allowedRoutes(){return Object.keys(routeInfo).filter(k=>teacher()||!['students','templates','analytics'].includes(k));}
+function renderNavigation(checks){
+  const groups=teacher()?[
+    ['Сегодня',['overview','calendar','students']],
+    ['Работа',['homework','materials','messages']],
+    ['Студия',['payments','progress','reports','analytics','templates','referrals','settings']]
+  ]:[
+    ['Главное',['overview','calendar','homework']],
+    ['Моё обучение',['materials','progress','reports','messages']],
+    ['Кабинет',['payments','referrals','settings']]
+  ];
+  const allowed=new Set(allowedRoutes());
+  return groups.map(([label,routes])=>`<div class="nav-group"><span class="nav-label">${label}</span>${routes.filter(k=>allowed.has(k)).map(k=>`<button class="nav-item ${S.route===k?'active':''}" data-route="${k}" ${S.route===k?'aria-current="page"':''}>${icon(routeInfo[k][1])}<span>${routeInfo[k][0]}</span>${k==='homework'&&checks&&teacher()?`<span class="nav-count">${checks}</span>`:''}</button>`).join('')}</div>`).join('');
+}
 function draw(){
   if(!S.user||!S.data)return;
   if(!allowedRoutes().includes(S.route))S.route='overview';
   const unread=S.data.notifications.filter(n=>!n.read_at).length;const checks=S.data.homework.filter(t=>t.status==='submitted').length;
-  $('#app').innerHTML=`${S.demo?'<div class="demo-banner">Демонстрационный кабинет · тестовые данные сохраняются отдельно · для смены роли выйдите из кабинета</div>':''}<div class="shell"><aside class="sidebar" id="sidebar"><a href="#overview" class="brand">${esc(S.data.settings.studio_name).replace(/\.$/,'<span>.</span>')}<small class="brand-caption">your teaching studio</small></a><nav aria-label="Разделы кабинета">${allowedRoutes().map(k=>`<button class="nav-item ${S.route===k?'active':''}" data-route="${k}" ${S.route===k?'aria-current="page"':''}>${icon(routeInfo[k][1])}${routeInfo[k][0]}${k==='homework'&&checks&&teacher()?`<span class="nav-count">${checks}</span>`:''}</button>`).join('')}</nav><div class="profile"><div class="avatar">${esc(initials(S.user.name))}</div><div class="grow"><strong>${esc(S.user.name)}</strong><small>${teacher()?'Преподаватель':'Ученик'}</small></div><button class="icon-button" data-action="logout" aria-label="Выйти">${icon('logout')}</button></div></aside><main class="main"><header class="topbar"><button class="icon-button mobile-toggle" data-action="menu" aria-label="Открыть меню">${icon('menu')}</button><div class="topbar-date"><i class="dot"></i>${esc(fmt(new Date(),{weekday:'long',day:'numeric',month:'long'}))}</div><div class="spacer"></div><button class="search-trigger" data-action="search" aria-label="Быстрый поиск">${icon('search')}<span>Быстрый поиск</span><kbd>⌘ K</kbd></button><button class="icon-button notify-button" data-action="notifications" aria-label="Уведомления${unread?', непрочитанных '+unread:''}">${icon('bell')}${unread?'<i></i>':''}</button>${teacher()?btn('Добавить','quick','','','plus'):btn('Оплатить','pay-start','','','wallet')}</header><section class="page" id="page">${renderPage()}</section></main></div>`;
+  $('#app').innerHTML=`${S.demo?'<div class="demo-banner">Демонстрационный кабинет · тестовые данные сохраняются отдельно · для смены роли выйдите из кабинета</div>':''}<div class="shell"><aside class="sidebar" id="sidebar"><a href="#overview" class="brand">${esc(S.data.settings.studio_name).replace(/\.$/,'<span>.</span>')}<small class="brand-caption">your teaching studio</small></a><nav aria-label="Разделы кабинета">${renderNavigation(checks)}</nav><div class="profile"><div class="avatar">${esc(initials(S.user.name))}</div><div class="grow"><strong>${esc(S.user.name)}</strong><small>${teacher()?'Преподаватель':'Ученик'}</small></div><button class="icon-button" data-action="logout" aria-label="Выйти">${icon('logout')}</button></div></aside><button class="sidebar-backdrop" data-action="menu" aria-label="Закрыть меню"></button><main class="main"><header class="topbar"><button class="icon-button mobile-toggle" data-action="menu" aria-label="Открыть меню" aria-expanded="false">${icon('menu')}</button><div class="topbar-date"><i class="dot"></i>${esc(fmt(new Date(),{weekday:'long',day:'numeric',month:'long'}))}</div><div class="spacer"></div><button class="search-trigger" data-action="search" aria-label="Быстрый поиск">${icon('search')}<span>Быстрый поиск</span><kbd>⌘ K</kbd></button><button class="icon-button notify-button" data-action="notifications" aria-label="Уведомления${unread?', непрочитанных '+unread:''}">${icon('bell')}${unread?'<i></i>':''}</button>${teacher()?btn('Добавить','quick','','','plus'):btn('Оплатить','pay-start','','','wallet')}</header><section class="page" id="page">${renderPage()}</section></main></div>`;
   if(S.route==='messages'){const box=$('.chat-body');if(box)box.scrollTop=box.scrollHeight;}
 }
 function renderPage(){return ({overview:overviewPage,calendar:calendarPage,students:studentsPage,payments:paymentsPage,homework:homeworkPage,materials:materialsPage,progress:progressPage,reports:reportsPage,analytics:analyticsPage,templates:templatesPage,messages:messagesPage,referrals:referralsPage,settings:settingsPage}[S.route]||overviewPage)();}
@@ -153,7 +166,7 @@ function renderSearch(query=''){const q=query.toLowerCase();const results=[...al
 
 async function action(name,id,element){
   if(name==='close'){closeModal();return;}
-  if(name==='menu'){$('#sidebar').classList.toggle('open');element.setAttribute('aria-expanded',$('#sidebar').classList.contains('open'));return;}
+  if(name==='menu'){const open=$('#sidebar').classList.toggle('open');$('.mobile-toggle')?.setAttribute('aria-expanded',open);return;}
   if(name.startsWith('route-')){navigate(name.slice(6));return;}
   if(name==='demo'){const r=await api('/auth/demo',{role:id});S.user=r.user;S.csrf=r.csrf;S.route='overview';history.replaceState(null,'','#overview');await refresh();return;}
   if(name==='logout'){await api('/auth/logout',{});S.user=null;S.data=null;S.studentFilter='';S.conversation='';closeModal();showAuth();return;}
